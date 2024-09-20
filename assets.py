@@ -76,7 +76,7 @@ PRICING = {
         "input": 0.075 / 1_000_000,  # $0.075 per 1M input tokens
         "output": 0.30 / 1_000_000, # $0.30 per 1M output tokens
     },
-    "Llama3.1 8B": {
+    "phi3.5:latest": {
         "input": 0 ,  # Free
         "output": 0 , # Free
     },
@@ -97,13 +97,12 @@ TIMEOUT_SETTINGS = {
 HEADLESS_OPTIONS = [ "--headless=new","--disable-gpu", "--disable-dev-shm-usage","--window-size=1920,1080","--disable-search-engine-choice-screen"]
 
 
-LLAMA_MODEL_FULLNAME="lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF"
 GROQ_LLAMA_MODEL_FULLNAME="llama-3.1-70b-versatile"
 
-SYSTEM_MESSAGE = """You are an intelligent procurement details extraction assistant. Your task is to extract structured procurement information 
-        from the given text and convert it into a pure JSON format. The JSON should contain only the procurement-related structured data extracted from 
-        the text, such as project name, project ID, procurement method, bid submission deadlines, award information, and other relevant fields. 
-        If you can't find certain data fields, leave them empty or omit them from the JSON output. The text might include foreign languages or varied formats, 
-        so adapt accordingly. Please process the following procurement text and provide the output in pure JSON format with no words before or after the JSON:"""
+SYSTEM_MESSAGE = """You are an intelligent text extraction and conversion assistant. Your task is to extract structured information 
+                        from the given text and convert it into a pure JSON format. The JSON should contain only the structured data extracted from the text, 
+                        with no additional commentary, explanations, or extraneous information. 
+                        You could encounter cases where you can't find the data of the fields you have to extract or the data will be in a foreign language.
+                        Please process the following text and provide the output in pure JSON format with no words before or after the JSON:"""
 
 USER_MESSAGE = f"Extract the following information from the provided text:\nPage content:\n\n"

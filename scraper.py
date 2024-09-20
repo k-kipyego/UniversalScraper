@@ -5,6 +5,8 @@ import re
 import json
 from datetime import datetime
 from typing import List, Dict, Type
+import requests
+import urllib.parse
 
 import pandas as pd
 from bs4 import BeautifulSoup
@@ -27,10 +29,16 @@ import google.generativeai as genai
 from groq import Groq
 
 
-from assets import USER_AGENTS,PRICING,HEADLESS_OPTIONS,SYSTEM_MESSAGE,USER_MESSAGE,LLAMA_MODEL_FULLNAME,GROQ_LLAMA_MODEL_FULLNAME
+from assets import USER_AGENTS,PRICING,HEADLESS_OPTIONS,SYSTEM_MESSAGE,USER_MESSAGE,GROQ_LLAMA_MODEL_FULLNAME
 load_dotenv()
 
 # Set up the Chrome WebDriver options
+
+model_id = "phi3.5:latest"
+encoded_model_id = urllib.parse.quote(model_id, safe='')  # Encodes all special characters
+# encoded_model_id = 'phi3.5%3Alatest'
+
+url = f"http://localhost:11434/v1/models/{encoded_model_id}/completions"
 
 def setup_selenium():
     options = Options()
@@ -212,11 +220,11 @@ def generate_system_message(listing_model: BaseModel) -> str:
     # Generate the system message dynamically
     system_message = f"""
     You are an intelligent text extraction and conversion assistant. Your task is to extract structured information 
-                        from the given text and convert it into a pure JSON format. The JSON should contain only the structured data extracted from the text, 
-                        with no additional commentary, explanations, or extraneous information. 
-                        You could encounter cases where you can't find the data of the fields you have to extract or the data will be in a foreign language.
-                        Please process the following text and provide the output in pure JSON format with no words before or after the JSON:
-    Please ensure the output strictly follows this schema:
+from the given text and convert it into a pure JSON format enclosed within a code block. The JSON should contain 
+only the structured data extracted from the text, with no additional commentary, explanations, or extraneous information.
+
+Please ensure the output strictly follows this JSON schema and is enclosed within triple backticks.
+
 
     {{
         "listings": [
@@ -273,28 +281,99 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
             "output_tokens": usage_metadata.candidates_token_count
         }
         return completion.text, token_counts
-    
-    elif selected_model == "Llama3.1 8B":
 
-        # Dynamically generate the system message based on the schema
-        sys_message = generate_system_message(DynamicListingModel)
-        # print(SYSTEM_MESSAGE)
-        # Point to the local server
-        client = OpenAI(base_url="http://localhost:1234/v1", api_key="lm-studio")
+    elif selected_model == "phi3.5:latest":
+        # Correct endpoint usage for Ollama's API
+        prompt = f"{SYSTEM_MESSAGE}\n{USER_MESSAGE}\n{data}"
+
+        # Define the payload as per Ollama's API specifications
+        payload = {
+            "model": selected_model,
+            "prompt": prompt,
+            "max_tokens": 1200,
+            "temperature": 0.7
+        }
+
+        try:
+            # Use the correct generate endpoint for Ollama
+            url = "http://localhost:11434/api/generate"
+            
+            # Make HTTP POST request to the Ollama API
+            response = requests.post(
+                url,
+                headers={"Content-Type": "application/json"},
+                json=payload,
+                stream=True  # Enable streaming
+            )
+            
+            # Print the HTTP status code for debugging
+            print(f"HTTP Status Code: {response.status_code}")
+            
+            response.raise_for_status()  # Raises HTTPError for bad responses
+            
+            # Process the streaming response
+            response_content = ""
+            for line in response.iter_lines():
+                if line:
+                    try:
+                        json_line = json.loads(line)
+                        if 'response' in json_line:
+                            response_content += json_line['response']
+                    except json.JSONDecodeError:
+                        # If it's not JSON, assume it's plain text
+                        response_content += line.decode('utf-8')
+            
+            if not response_content:
+                raise ValueError("No valid response received from Ollama API.")
+
+            # Print the raw response text
+            print("Raw Response Content:")
+            print(response_content)
+            
+            # Treat the response as plain text
+            parsed_response = {"text": response_content}
+            
+            # Calculate token counts using tiktoken
+            try:
+                encoder = tiktoken.encoding_for_model('gpt-3.5-turbo')  # Use a compatible encoding
+            except KeyError:
+                encoder = tiktoken.get_encoding("cl100k_base")  # Fallback encoding
+            input_token_count = len(encoder.encode(prompt))
+            output_token_count = len(encoder.encode(response_content))
+            token_counts = {
+                "input_tokens": input_token_count,
+                "output_tokens": output_token_count
+            }
+
+            return parsed_response, token_counts
+
+        except requests.exceptions.HTTPError as http_err:
+            print(f"HTTP error occurred: {http_err}")
+            print(f"Response content: {response.text}")  # Print the response body for debugging
+            raise ValueError(f"Ollama API request failed: {http_err}")
+        except requests.exceptions.RequestException as e:
+            print(f"Error communicating with Ollama API: {e}")
+            raise ValueError(f"Ollama API request failed: {e}")
+        except Exception as e:
+            print(f"Unexpected error: {e}")
+            print(f"Response content: {response_content}")
+            raise ValueError(f"Failed to process Ollama API response: {e}")
+            
+    elif selected_model == "Groq Llama3.1 70b":
+        # Use Groq Llama3.1 70b API
+        client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
         completion = client.chat.completions.create(
-            model=LLAMA_MODEL_FULLNAME, #change this if needed (use a better model)
             messages=[
-                {"role": "system", "content": sys_message},
-                {"role": "user", "content": USER_MESSAGE + data}
+                {"role": "system","content": sys_message},
+                {"role": "user","content": USER_MESSAGE + data}
             ],
-            temperature=0.7,
-            
+            model=GROQ_LLAMA_MODEL_FULLNAME,
         )
 
         # Extract the content from the response
         response_content = completion.choices[0].message.content
-        print(response_content)
+        
         # Convert the content from JSON string to a Python dictionary
         parsed_response = json.loads(response_content)
         
@@ -305,35 +384,7 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
         }
 
         return parsed_response, token_counts
-    elif selected_model== "Groq Llama3.1 70b":
-        
-        # Dynamically generate the system message based on the schema
-        sys_message = generate_system_message(DynamicListingModel)
-        # print(SYSTEM_MESSAGE)
-        # Point to the local server
-        client = Groq(api_key=os.environ.get("GROQ_API_KEY"),)
 
-        completion = client.chat.completions.create(
-        messages=[
-            {"role": "system","content": sys_message},
-            {"role": "user","content": USER_MESSAGE + data}
-        ],
-        model=GROQ_LLAMA_MODEL_FULLNAME,
-    )
-
-        # Extract the content from the response
-        response_content = completion.choices[0].message.content
-        
-        # Convert the content from JSON string to a Python dictionary
-        parsed_response = json.loads(response_content)
-        
-        # completion.usage
-        token_counts = {
-            "input_tokens": completion.usage.prompt_tokens,
-            "output_tokens": completion.usage.completion_tokens
-        }
-
-        return parsed_response, token_counts
     else:
         raise ValueError(f"Unsupported model: {selected_model}")
 
@@ -343,12 +394,14 @@ def save_formatted_data(formatted_data, timestamp, output_folder='output'):
     # Ensure the output folder exists
     os.makedirs(output_folder, exist_ok=True)
     
-    # Parse the formatted data if it's a JSON string (from Gemini API)
+    # Handle different types of formatted_data
     if isinstance(formatted_data, str):
         try:
+            # Try to parse as JSON
             formatted_data_dict = json.loads(formatted_data)
         except json.JSONDecodeError:
-            raise ValueError("The provided formatted data is a string but not valid JSON.")
+            # If it's not JSON, treat it as plain text
+            formatted_data_dict = {"text": formatted_data}
     else:
         # Handle data from OpenAI or other sources
         formatted_data_dict = formatted_data.dict() if hasattr(formatted_data, 'dict') else formatted_data
@@ -361,17 +414,36 @@ def save_formatted_data(formatted_data, timestamp, output_folder='output'):
 
     # Prepare data for DataFrame
     if isinstance(formatted_data_dict, dict):
-        # If the data is a dictionary containing lists, assume these lists are records
-        data_for_df = next(iter(formatted_data_dict.values())) if len(formatted_data_dict) == 1 else formatted_data_dict
+        if len(formatted_data_dict) == 1 and "text" in formatted_data_dict:
+            # Handle plain text case
+            data_for_df = [{"text": formatted_data_dict["text"]}]
+        else:
+            # If the data is a dictionary containing lists, assume these lists are records
+            data_for_df = next(iter(formatted_data_dict.values())) if len(formatted_data_dict) == 1 else formatted_data_dict
     elif isinstance(formatted_data_dict, list):
         data_for_df = formatted_data_dict
     else:
-        raise ValueError("Formatted data is neither a dictionary nor a list, cannot convert to DataFrame")
+        raise ValueError(f"Formatted data is neither a dictionary nor a list. Type: {type(formatted_data_dict)}")
 
     # Create DataFrame
     try:
-        df = pd.DataFrame(data_for_df)
+        # Print debug information
+        print(f"Data type for DataFrame: {type(data_for_df)}")
+        print(f"Data for DataFrame: {data_for_df}")
+
+        if isinstance(data_for_df, dict):
+            # If it's a dict, create a DataFrame with a single row
+            df = pd.DataFrame([data_for_df])
+        elif isinstance(data_for_df, list) and all(isinstance(item, dict) for item in data_for_df):
+            # If it's a list of dicts, create DataFrame directly
+            df = pd.DataFrame(data_for_df)
+        else:
+            # For other cases, try to create a single-column DataFrame
+            df = pd.DataFrame({'data': [data_for_df]})
+
         print("DataFrame created successfully.")
+        print(f"DataFrame shape: {df.shape}")
+        print(f"DataFrame columns: {df.columns}")
 
         # Save the DataFrame to an Excel file
         excel_output_path = os.path.join(output_folder, f'sorted_data_{timestamp}.xlsx')
@@ -381,8 +453,9 @@ def save_formatted_data(formatted_data, timestamp, output_folder='output'):
         return df
     except Exception as e:
         print(f"Error creating DataFrame or saving Excel: {str(e)}")
+        print(f"Data causing the error: {data_for_df}")
         return None
-
+    
 def calculate_price(token_counts, model):
     input_token_count = token_counts.get("input_tokens", 0)
     output_token_count = token_counts.get("output_tokens", 0)
@@ -396,148 +469,21 @@ def calculate_price(token_counts, model):
 
 
 
-def handle_pagination(driver, max_pages=10):
-    """
-    Handle pagination on the website by identifying the correct pagination strategy.
-    Tries "Next" buttons, numbered links, or "Load More" button.
-    
-    Args:
-        driver: Selenium WebDriver instance.
-        max_pages: Maximum number of pages to navigate through.
-        
-    Returns:
-        All collected HTML pages as a list.
-    """
-    all_pages_html = []  # Store HTML of each page
-    page_count = 0
-
-    while page_count < max_pages:
-        time.sleep(random.uniform(1, 3))  # Wait for any dynamic content to load
-
-        # Collect the current page's HTML
-        all_pages_html.append(driver.page_source)
-        print(f"Collected HTML for page {page_count + 1}")
-
-        # Try different pagination strategies in order
-        if try_click_next_button(driver):
-            print(f"Clicked 'Next' button on page {page_count + 1}")
-        elif try_click_numbered_link(driver, page_count + 1):
-            print(f"Clicked page number {page_count + 2}")
-        elif try_click_load_more_button(driver):
-            print(f"Clicked 'Load More' button on page {page_count + 1}")
-        else:
-            # No pagination element found, break out of loop
-            print("No pagination element found, stopping.")
-            break
-
-        # Increase the page count
-        page_count += 1
-
-    return all_pages_html
-
-
-def try_click_next_button(driver):
-    """
-    Try clicking the 'Next' button for pagination.
-    Returns True if successful, False otherwise.
-    """
-    try:
-        next_button = WebDriverWait(driver, 5).until(
-            EC.element_to_be_clickable((By.XPATH, "//a[contains(., 'Next') or contains(., 'next')]"))
-        )
-        driver.execute_script("arguments[0].scrollIntoView(true);", next_button)  # Scroll into view
-        next_button.click()
-        return True
-    except Exception as e:
-        print(f"'Next' button not found or not clickable: {e}")
-        return False
-
-
-def try_click_numbered_link(driver, current_page):
-    """
-    Try clicking the next numbered pagination link.
-    Args:
-        driver: Selenium WebDriver instance.
-        current_page: Current page number (0-based index).
-        
-    Returns True if successful, False otherwise.
-    """
-    try:
-        # Find the next page number by locating links with page numbers
-        next_page_number = current_page + 2  # Pages are 1-based in most cases
-        next_page_link = WebDriverWait(driver, 5).until(
-            EC.element_to_be_clickable((By.XPATH, f"//a[text()='{next_page_number}']"))
-        )
-        driver.execute_script("arguments[0].scrollIntoView(true);", next_page_link)  # Scroll into view
-        next_page_link.click()
-        return True
-    except Exception as e:
-        print(f"Numbered link for page {current_page + 2} not found or not clickable: {e}")
-        return False
-
-
-def try_click_load_more_button(driver):
-    """
-    Try clicking a 'Load More' button if it exists.
-    Returns True if successful, False otherwise.
-    """
-    try:
-        load_more_button = WebDriverWait(driver, 5).until(
-            EC.element_to_be_clickable((By.XPATH, "//button[contains(., 'Load More') or contains(., 'load more')]"))
-        )
-        driver.execute_script("arguments[0].scrollIntoView(true);", load_more_button)  # Scroll into view
-        load_more_button.click()
-        return True
-    except Exception as e:
-        print(f"'Load More' button not found or not clickable: {e}")
-        return False
-
-
-def fetch_html_with_pagination(url, max_pages=10):
-    """
-    Fetch HTML content from multiple pages using pagination.
-
-    Args:
-        url: The URL of the page to scrape.
-        max_pages: Maximum number of pages to scrape (default is 10).
-
-    Returns:
-        A concatenated string of all HTML pages.
-    """
-    driver = setup_selenium()
-    try:
-        driver.get(url)
-        time.sleep(1)  # Give the page some time to load
-        driver.maximize_window()
-
-        # Try to find and click the 'Accept Cookies' button
-        click_accept_cookies(driver)
-
-        # Handle pagination and fetch HTML from all pages
-        all_html_pages = handle_pagination(driver, max_pages=max_pages)
-
-        # Concatenate all HTML pages
-        full_html_content = "\n".join(all_html_pages)
-        return full_html_content
-    finally:
-        driver.quit()
 
 
 if __name__ == "__main__":
     url = 'https://webscraper.io/test-sites/e-commerce/static'
     fields = ['Name of item', 'Price']
-    max_pages = 5  # Set the maximum number of pages you want to scrape
 
     try:
         # Generate timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-
-        # Scrape data with pagination
-        raw_html = fetch_html_with_pagination(url, max_pages=max_pages)
-
-        # Process the collected HTML
+        
+        # Scrape data
+        raw_html = fetch_html_selenium(url)
+    
         markdown = html_to_markdown_with_readability(raw_html)
-
+        
         # Save raw data
         save_raw_data(markdown, timestamp)
 
@@ -546,19 +492,26 @@ if __name__ == "__main__":
 
         # Create the container model that holds a list of the dynamic listing models
         DynamicListingsContainer = create_listings_container_model(DynamicListingModel)
-
-        # Format data
-        formatted_data, token_counts = format_data(markdown, DynamicListingsContainer, DynamicListingModel, "Groq Llama3.1 70b")
+        
+        # Format data using Ollama Phi3.5 model
+        formatted_data, token_counts = format_data(
+            markdown,
+            DynamicListingsContainer,
+            DynamicListingModel,
+            "phi3.5:latest"  # Use the exact model ID as listed
+        )
         print(formatted_data)
-
+        
         # Save formatted data
         save_formatted_data(formatted_data, timestamp)
 
         # Convert formatted_data back to text for token counting
-        formatted_data_text = json.dumps(formatted_data.dict() if hasattr(formatted_data, 'dict') else formatted_data)
-
+        formatted_data_text = json.dumps(
+            formatted_data.dict() if hasattr(formatted_data, 'dict') else formatted_data
+        )
+        
         # Automatically calculate the token usage and cost for all input and output
-        input_tokens, output_tokens, total_cost = calculate_price(token_counts, "Groq Llama3.1 70b")
+        input_tokens, output_tokens, total_cost = calculate_price(token_counts, "phi3.5:latest")
         print(f"Input token count: {input_tokens}")
         print(f"Output token count: {output_tokens}")
         print(f"Estimated total cost: ${total_cost:.4f}")

@@ -3,7 +3,7 @@ from streamlit_tags import st_tags_sidebar
 import pandas as pd
 import json
 from datetime import datetime
-from scraper import fetch_html_selenium, save_raw_data, format_data, save_formatted_data, calculate_price, html_to_markdown_with_readability, create_dynamic_listing_model, create_listings_container_model, fetch_html_with_pagination
+from scraper import fetch_html_selenium, save_raw_data, format_data, save_formatted_data, calculate_price,html_to_markdown_with_readability, create_dynamic_listing_model,create_listings_container_model
 
 from assets import PRICING
 
@@ -42,17 +42,16 @@ input_tokens = output_tokens = total_cost = 0  # Default values
 # Define the scraping function
 def perform_scrape():
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    raw_html = fetch_html_with_pagination(url_input, max_pages=15)  # Use handle_pagination here
+    raw_html = fetch_html_selenium(url_input)
     markdown = html_to_markdown_with_readability(raw_html)
     save_raw_data(markdown, timestamp)
     DynamicListingModel = create_dynamic_listing_model(fields)
     DynamicListingsContainer = create_listings_container_model(DynamicListingModel)
-    formatted_data, tokens_count = format_data(markdown, DynamicListingsContainer, DynamicListingModel, model_selection)
+    formatted_data, tokens_count = format_data(markdown, DynamicListingsContainer,DynamicListingModel,model_selection)
     input_tokens, output_tokens, total_cost = calculate_price(tokens_count, model=model_selection)
     df = save_formatted_data(formatted_data, timestamp)
 
     return df, formatted_data, markdown, input_tokens, output_tokens, total_cost, timestamp
-
 
 # Handling button press for scraping
 if 'perform_scrape' not in st.session_state:
