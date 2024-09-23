@@ -5,13 +5,12 @@ import re
 import json
 from datetime import datetime
 from typing import List, Dict, Type
-import requests
-import urllib.parse
 
 import pandas as pd
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field, create_model
 import html2text
+import requests
 import tiktoken
 
 from dotenv import load_dotenv
@@ -29,16 +28,9 @@ import google.generativeai as genai
 from groq import Groq
 
 
-from assets import USER_AGENTS,PRICING,HEADLESS_OPTIONS,SYSTEM_MESSAGE,USER_MESSAGE,GROQ_LLAMA_MODEL_FULLNAME
-load_dotenv()
+from assets import USER_AGENTS,PRICING,HEADLESS_OPTIONS,SYSTEM_MESSAGE,USER_MESSAGE
 
 # Set up the Chrome WebDriver options
-
-model_id = "phi3.5:latest"
-encoded_model_id = urllib.parse.quote(model_id, safe='')  # Encodes all special characters
-# encoded_model_id = 'phi3.5%3Alatest'
-
-url = f"http://localhost:11434/v1/models/{encoded_model_id}/completions"
 
 def setup_selenium():
     options = Options()
@@ -52,7 +44,7 @@ def setup_selenium():
         options.add_argument(option)
 
     # Specify the path to the ChromeDriver
-    service = Service(r"C:\ScrapeMaster\chromedriver-win64\chromedriver.exe")  
+    service = Service("C:/ScrapeMaster/chromedriver-win64/chromedriver.exe")  
 
     # Initialize the WebDriver
     driver = webdriver.Chrome(service=service, options=options)
@@ -220,11 +212,11 @@ def generate_system_message(listing_model: BaseModel) -> str:
     # Generate the system message dynamically
     system_message = f"""
     You are an intelligent text extraction and conversion assistant. Your task is to extract structured information 
-from the given text and convert it into a pure JSON format enclosed within a code block. The JSON should contain 
-only the structured data extracted from the text, with no additional commentary, explanations, or extraneous information.
-
-Please ensure the output strictly follows this JSON schema and is enclosed within triple backticks.
-
+                        from the given text and convert it into a pure JSON format. The JSON should contain only the structured data extracted from the text, 
+                        with no additional commentary, explanations, or extraneous information. 
+                        You could encounter cases where you can't find the data of the fields you have to extract or the data will be in a foreign language.
+                        Please process the following text and provide the output in pure JSON format with no words before or after the JSON:
+    Please ensure the output strictly follows this schema:
 
     {{
         "listings": [
@@ -241,7 +233,8 @@ Please ensure the output strictly follows this JSON schema and is enclosed withi
 def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_model):
     token_counts = {}
     
-    if selected_model == "phi3.5:latest":
+    
+    if selected_model == "phi3.5:latest" or selected_model == "phi3.5":
         # Correct endpoint usage for Ollama's API
         prompt = f"{SYSTEM_MESSAGE}\n{USER_MESSAGE}\n{data}"
 
@@ -317,20 +310,20 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
             print(f"Unexpected error: {e}")
             print(f"Response content: {response_content}")
             raise ValueError(f"Failed to process Ollama API response: {e}")
-            
+        
+
+
 
 def save_formatted_data(formatted_data, timestamp, output_folder='output'):
     # Ensure the output folder exists
     os.makedirs(output_folder, exist_ok=True)
     
-    # Handle different types of formatted_data
+    # Parse the formatted data if it's a JSON string (from Gemini API)
     if isinstance(formatted_data, str):
         try:
-            # Try to parse as JSON
             formatted_data_dict = json.loads(formatted_data)
         except json.JSONDecodeError:
-            # If it's not JSON, treat it as plain text
-            formatted_data_dict = {"text": formatted_data}
+            raise ValueError("The provided formatted data is a string but not valid JSON.")
     else:
         # Handle data from OpenAI or other sources
         formatted_data_dict = formatted_data.dict() if hasattr(formatted_data, 'dict') else formatted_data
@@ -343,36 +336,17 @@ def save_formatted_data(formatted_data, timestamp, output_folder='output'):
 
     # Prepare data for DataFrame
     if isinstance(formatted_data_dict, dict):
-        if len(formatted_data_dict) == 1 and "text" in formatted_data_dict:
-            # Handle plain text case
-            data_for_df = [{"text": formatted_data_dict["text"]}]
-        else:
-            # If the data is a dictionary containing lists, assume these lists are records
-            data_for_df = next(iter(formatted_data_dict.values())) if len(formatted_data_dict) == 1 else formatted_data_dict
+        # If the data is a dictionary containing lists, assume these lists are records
+        data_for_df = next(iter(formatted_data_dict.values())) if len(formatted_data_dict) == 1 else formatted_data_dict
     elif isinstance(formatted_data_dict, list):
         data_for_df = formatted_data_dict
     else:
-        raise ValueError(f"Formatted data is neither a dictionary nor a list. Type: {type(formatted_data_dict)}")
+        raise ValueError("Formatted data is neither a dictionary nor a list, cannot convert to DataFrame")
 
     # Create DataFrame
     try:
-        # Print debug information
-        print(f"Data type for DataFrame: {type(data_for_df)}")
-        print(f"Data for DataFrame: {data_for_df}")
-
-        if isinstance(data_for_df, dict):
-            # If it's a dict, create a DataFrame with a single row
-            df = pd.DataFrame([data_for_df])
-        elif isinstance(data_for_df, list) and all(isinstance(item, dict) for item in data_for_df):
-            # If it's a list of dicts, create DataFrame directly
-            df = pd.DataFrame(data_for_df)
-        else:
-            # For other cases, try to create a single-column DataFrame
-            df = pd.DataFrame({'data': [data_for_df]})
-
+        df = pd.DataFrame(data_for_df)
         print("DataFrame created successfully.")
-        print(f"DataFrame shape: {df.shape}")
-        print(f"DataFrame columns: {df.columns}")
 
         # Save the DataFrame to an Excel file
         excel_output_path = os.path.join(output_folder, f'sorted_data_{timestamp}.xlsx')
@@ -382,9 +356,8 @@ def save_formatted_data(formatted_data, timestamp, output_folder='output'):
         return df
     except Exception as e:
         print(f"Error creating DataFrame or saving Excel: {str(e)}")
-        print(f"Data causing the error: {data_for_df}")
         return None
-    
+
 def calculate_price(token_counts, model):
     input_token_count = token_counts.get("input_tokens", 0)
     output_token_count = token_counts.get("output_tokens", 0)
@@ -396,13 +369,12 @@ def calculate_price(token_counts, model):
     
     return input_token_count, output_token_count, total_cost
 
-
 if __name__ == "__main__":
     url = 'https://webscraper.io/test-sites/e-commerce/static'
-    fields = ['Name of item', 'Price']
+    fields=['Name of item', 'Price']
 
     try:
-        # Generate timestamp
+        # # Generate timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         
         # Scrape data
@@ -419,31 +391,22 @@ if __name__ == "__main__":
         # Create the container model that holds a list of the dynamic listing models
         DynamicListingsContainer = create_listings_container_model(DynamicListingModel)
         
-        # Format data using Ollama Phi3.5 model
-        formatted_data, token_counts = format_data(
-            markdown,
-            DynamicListingsContainer,
-            DynamicListingModel,
-            "phi3.5:latest"  # Use the exact model ID as listed
-        )
+        # Format data
+        formatted_data, token_counts = format_data(markdown, DynamicListingsContainer,DynamicListingModel,"Groq Llama3.1 70b")  # Use markdown, not raw_html
         print(formatted_data)
-        
         # Save formatted data
         save_formatted_data(formatted_data, timestamp)
 
         # Convert formatted_data back to text for token counting
-        formatted_data_text = json.dumps(
-            formatted_data.dict() if hasattr(formatted_data, 'dict') else formatted_data
-        )
+        formatted_data_text = json.dumps(formatted_data.dict() if hasattr(formatted_data, 'dict') else formatted_data) 
+        
         
         # Automatically calculate the token usage and cost for all input and output
-        input_tokens, output_tokens, total_cost = calculate_price(token_counts, "phi3.5:latest")
+        input_tokens, output_tokens, total_cost = calculate_price(token_counts, "Groq Llama3.1 70b")
         print(f"Input token count: {input_tokens}")
         print(f"Output token count: {output_tokens}")
         print(f"Estimated total cost: ${total_cost:.4f}")
 
     except Exception as e:
         print(f"An error occurred: {e}")
-
-
-
+        
