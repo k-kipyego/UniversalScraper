@@ -28,7 +28,10 @@ import google.generativeai as genai
 from groq import Groq
 
 
-from assets import USER_AGENTS,PRICING,HEADLESS_OPTIONS,SYSTEM_MESSAGE,USER_MESSAGE
+from assets import USER_AGENTS,PRICING,HEADLESS_OPTIONS,SYSTEM_MESSAGE,USER_MESSAGE, GROQ_LLAMA_MODEL_FULLNAME
+from groq import Groq
+
+client = Groq(api_key="your_api_key_here")
 
 # Set up the Chrome WebDriver options
 
@@ -225,20 +228,37 @@ def generate_system_message(listing_model: BaseModel) -> str:
             }}
         ]
     }} """
-
+    system_message += "\nThe input will be provided as markdown text enclosed in triple backticks. Extract the required information from this markdown."
     return system_message
 
 
 
 def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_model):
     token_counts = {}
+    if selected_model in ["gpt-4o-mini", "gpt-4o-2024-08-06"]:
+        # Use OpenAI API
+        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
+        completion = client.beta.chat.completions.parse(
+            model=selected_model,
+            messages=[
+                {"role": "system", "content": SYSTEM_MESSAGE},
+                {"role": "user", "content": USER_MESSAGE + data},
+            ],
+            response_format=DynamicListingsContainer
+        )
+        # Calculate tokens using tiktoken
+        encoder = tiktoken.encoding_for_model(selected_model)
+        input_token_count = len(encoder.encode(USER_MESSAGE + data))
+        output_token_count = len(encoder.encode(json.dumps(completion.choices[0].message.parsed.dict())))
+        token_counts = {
+            "input_tokens": input_token_count,
+            "output_tokens": output_token_count
+        }
+        return completion.choices[0].message.parsed, token_counts
     
-    
-    if selected_model == "phi3.5:latest" or selected_model == "phi3.5":
-        # Correct endpoint usage for Ollama's API
-        prompt = f"{SYSTEM_MESSAGE}\n{USER_MESSAGE}\n{data}"
+    elif selected_model == "mistral-nemo:latest":
+        prompt = f"{SYSTEM_MESSAGE}\n{USER_MESSAGE}\n\n{data}\n"
 
-        # Define the payload as per Ollama's API specifications
         payload = {
             "model": selected_model,
             "prompt": prompt,
@@ -247,23 +267,18 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
         }
 
         try:
-            # Use the correct generate endpoint for Ollama
             url = "http://localhost:11434/api/generate"
-            
-            # Make HTTP POST request to the Ollama API
             response = requests.post(
                 url,
                 headers={"Content-Type": "application/json"},
                 json=payload,
-                stream=True  # Enable streaming
+                stream=True
             )
             
-            # Print the HTTP status code for debugging
             print(f"HTTP Status Code: {response.status_code}")
             
-            response.raise_for_status()  # Raises HTTPError for bad responses
+            response.raise_for_status()
             
-            # Process the streaming response
             response_content = ""
             for line in response.iter_lines():
                 if line:
@@ -272,24 +287,31 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
                         if 'response' in json_line:
                             response_content += json_line['response']
                     except json.JSONDecodeError:
-                        # If it's not JSON, assume it's plain text
                         response_content += line.decode('utf-8')
             
             if not response_content:
                 raise ValueError("No valid response received from Ollama API.")
 
-            # Print the raw response text
             print("Raw Response Content:")
             print(response_content)
             
-            # Treat the response as plain text
-            parsed_response = {"text": response_content}
-            
-            # Calculate token counts using tiktoken
+            # Post-processing step
+            response_content = response_content.strip()
+            if not response_content.startswith('{'):
+                response_content = '{' + response_content
+            if not response_content.endswith('}'):
+                response_content += '}'
+
             try:
-                encoder = tiktoken.encoding_for_model('gpt-3.5-turbo')  # Use a compatible encoding
+                parsed_response = json.loads(response_content)
+            except json.JSONDecodeError:
+                parsed_response = {"text": response_content}
+            
+            # Calculate token counts
+            try:
+                encoder = tiktoken.encoding_for_model('gpt-3.5-turbo')
             except KeyError:
-                encoder = tiktoken.get_encoding("cl100k_base")  # Fallback encoding
+                encoder = tiktoken.get_encoding("cl100k_base")
             input_token_count = len(encoder.encode(prompt))
             output_token_count = len(encoder.encode(response_content))
             token_counts = {
@@ -301,7 +323,7 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
 
         except requests.exceptions.HTTPError as http_err:
             print(f"HTTP error occurred: {http_err}")
-            print(f"Response content: {response.text}")  # Print the response body for debugging
+            print(f"Response content: {response.text}")
             raise ValueError(f"Ollama API request failed: {http_err}")
         except requests.exceptions.RequestException as e:
             print(f"Error communicating with Ollama API: {e}")
@@ -311,6 +333,38 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
             print(f"Response content: {response_content}")
             raise ValueError(f"Failed to process Ollama API response: {e}")
         
+    elif selected_model== "Groq Llama3.1 70b":
+        
+        # Dynamically generate the system message based on the schema
+        sys_message = generate_system_message(DynamicListingModel)
+        # print(SYSTEM_MESSAGE)
+        # Point to the local server
+        client = Groq(api_key=os.environ.get("GROQ_API_KEY"),)
+
+        completion = client.chat.completions.create(
+        messages=[
+            {"role": "system","content": sys_message},
+            {"role": "user","content": USER_MESSAGE + data}
+        ],
+        model=GROQ_LLAMA_MODEL_FULLNAME,
+    )
+
+        # Extract the content from the response
+        response_content = completion.choices[0].message.content
+        
+        # Convert the content from JSON string to a Python dictionary
+        parsed_response = json.loads(response_content)
+        
+        # completion.usage
+        token_counts = {
+            "input_tokens": completion.usage.prompt_tokens,
+            "output_tokens": completion.usage.completion_tokens
+        }
+
+        return parsed_response, token_counts
+    else:
+        raise ValueError(f"Unsupported model: {selected_model}")
+
 
 
 
@@ -369,19 +423,21 @@ def calculate_price(token_counts, model):
     
     return input_token_count, output_token_count, total_cost
 
+    # ...
+
 if __name__ == "__main__":
     url = 'https://webscraper.io/test-sites/e-commerce/static'
-    fields=['Name of item', 'Price']
+    fields = ['Name of item', 'Price']
 
     try:
-        # # Generate timestamp
+        # Generate timestamp
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-        
+
         # Scrape data
         raw_html = fetch_html_selenium(url)
-    
+
         markdown = html_to_markdown_with_readability(raw_html)
-        
+
         # Save raw data
         save_raw_data(markdown, timestamp)
 
@@ -390,23 +446,29 @@ if __name__ == "__main__":
 
         # Create the container model that holds a list of the dynamic listing models
         DynamicListingsContainer = create_listings_container_model(DynamicListingModel)
-        
-        # Format data
-        formatted_data, token_counts = format_data(markdown, DynamicListingsContainer,DynamicListingModel,"Groq Llama3.1 70b")  # Use markdown, not raw_html
+
+        # Format data using the correct model name
+        formatted_data, token_counts = format_data(
+            markdown, 
+            DynamicListingsContainer,
+            DynamicListingModel,
+            "mistral-nemo:latest"  # Updated to match assets.py
+        )
         print(formatted_data)
         # Save formatted data
         save_formatted_data(formatted_data, timestamp)
 
         # Convert formatted_data back to text for token counting
-        formatted_data_text = json.dumps(formatted_data.dict() if hasattr(formatted_data, 'dict') else formatted_data) 
-        
-        
+        formatted_data_text = json.dumps(
+            formatted_data.dict() if hasattr(formatted_data, 'dict') else formatted_data
+        )
+
         # Automatically calculate the token usage and cost for all input and output
-        input_tokens, output_tokens, total_cost = calculate_price(token_counts, "Groq Llama3.1 70b")
+        input_tokens, output_tokens, total_cost = calculate_price(token_counts, "mistral-nemo:latest")
         print(f"Input token count: {input_tokens}")
         print(f"Output token count: {output_tokens}")
         print(f"Estimated total cost: ${total_cost:.4f}")
 
     except Exception as e:
         print(f"An error occurred: {e}")
-        
+    

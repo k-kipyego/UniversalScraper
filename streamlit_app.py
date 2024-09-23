@@ -47,11 +47,44 @@ def perform_scrape():
     save_raw_data(markdown, timestamp)
     DynamicListingModel = create_dynamic_listing_model(fields)
     DynamicListingsContainer = create_listings_container_model(DynamicListingModel)
-    formatted_data, tokens_count = format_data(markdown, DynamicListingsContainer,DynamicListingModel,model_selection)
+    formatted_data, tokens_count = format_data(markdown, DynamicListingsContainer, DynamicListingModel, model_selection)
     input_tokens, output_tokens, total_cost = calculate_price(tokens_count, model=model_selection)
     df = save_formatted_data(formatted_data, timestamp)
 
     return df, formatted_data, markdown, input_tokens, output_tokens, total_cost, timestamp
+
+
+def create_dataframe(data):
+    print("Debug: Type of data:", type(data))
+    print("Debug: Content of data:", data)
+
+    if isinstance(data, dict):
+        df = pd.DataFrame([data])
+    elif isinstance(data, list):
+        if all(isinstance(item, dict) for item in data):
+            df = pd.DataFrame(data)
+        else:
+            df = pd.DataFrame(data, columns=['data'])
+    elif isinstance(data, str):
+        try:
+            parsed_data = json.loads(data)
+            if isinstance(parsed_data, dict):
+                df = pd.DataFrame([parsed_data])
+            elif isinstance(parsed_data, list):
+                df = pd.DataFrame(parsed_data)
+            else:
+                df = pd.DataFrame([{'data': data}])
+        except json.JSONDecodeError:
+            df = pd.DataFrame([{'data': data}])
+    else:
+        df = pd.DataFrame([{'data': str(data)}])
+
+    print("Debug: DataFrame shape:", df.shape)
+    print("Debug: DataFrame columns:", df.columns)
+    print("Debug: First few rows of DataFrame:")
+    print(df.head())
+
+    return df
 
 # Handling button press for scraping
 if 'perform_scrape' not in st.session_state:
@@ -89,8 +122,7 @@ if st.session_state.get('perform_scrape'):
         main_data = data_dict[first_key]   # Access data using this key
 
         # Create DataFrame from the data
-        df = pd.DataFrame(main_data)
-
+        df = create_dataframe(main_data)
         # data_dict=json.dumps(formatted_data.dict(), indent=4)
         st.download_button("Download CSV", data=df.to_csv(index=False), file_name=f"{timestamp}_data.csv")
     with col3:
