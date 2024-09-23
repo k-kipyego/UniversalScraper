@@ -241,48 +241,7 @@ Please ensure the output strictly follows this JSON schema and is enclosed withi
 def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_model):
     token_counts = {}
     
-    if selected_model in ["gpt-4o-mini", "gpt-4o-2024-08-06"]:
-        # Use OpenAI API
-        client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-        completion = client.beta.chat.completions.parse(
-            model=selected_model,
-            messages=[
-                {"role": "system", "content": SYSTEM_MESSAGE},
-                {"role": "user", "content": USER_MESSAGE + data},
-            ],
-            response_format=DynamicListingsContainer
-        )
-        # Calculate tokens using tiktoken
-        encoder = tiktoken.encoding_for_model(selected_model)
-        input_token_count = len(encoder.encode(USER_MESSAGE + data))
-        output_token_count = len(encoder.encode(json.dumps(completion.choices[0].message.parsed.dict())))
-        token_counts = {
-            "input_tokens": input_token_count,
-            "output_tokens": output_token_count
-        }
-        return completion.choices[0].message.parsed, token_counts
-
-    elif selected_model == "gemini-1.5-flash":
-        # Use Google Gemini API
-        genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-        model = genai.GenerativeModel('gemini-1.5-flash',
-                generation_config={
-                    "response_mime_type": "application/json",
-                    "response_schema": DynamicListingsContainer
-                })
-        prompt = SYSTEM_MESSAGE + "\n" + USER_MESSAGE + data
-        # Count input tokens using Gemini's method
-        input_tokens = model.count_tokens(prompt)
-        completion = model.generate_content(prompt)
-        # Extract token counts from usage_metadata
-        usage_metadata = completion.usage_metadata
-        token_counts = {
-            "input_tokens": usage_metadata.prompt_token_count,
-            "output_tokens": usage_metadata.candidates_token_count
-        }
-        return completion.text, token_counts
-
-    elif selected_model == "phi3.5:latest":
+    if selected_model == "phi3.5:latest":
         # Correct endpoint usage for Ollama's API
         prompt = f"{SYSTEM_MESSAGE}\n{USER_MESSAGE}\n{data}"
 
@@ -359,36 +318,6 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
             print(f"Response content: {response_content}")
             raise ValueError(f"Failed to process Ollama API response: {e}")
             
-    elif selected_model == "Groq Llama3.1 70b":
-        # Use Groq Llama3.1 70b API
-        client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-
-        completion = client.chat.completions.create(
-            messages=[
-                {"role": "system","content": sys_message},
-                {"role": "user","content": USER_MESSAGE + data}
-            ],
-            model=GROQ_LLAMA_MODEL_FULLNAME,
-        )
-
-        # Extract the content from the response
-        response_content = completion.choices[0].message.content
-        
-        # Convert the content from JSON string to a Python dictionary
-        parsed_response = json.loads(response_content)
-        
-        # Extract token usage
-        token_counts = {
-            "input_tokens": completion.usage.prompt_tokens,
-            "output_tokens": completion.usage.completion_tokens
-        }
-
-        return parsed_response, token_counts
-
-    else:
-        raise ValueError(f"Unsupported model: {selected_model}")
-
-
 
 def save_formatted_data(formatted_data, timestamp, output_folder='output'):
     # Ensure the output folder exists
@@ -468,9 +397,6 @@ def calculate_price(token_counts, model):
     return input_token_count, output_token_count, total_cost
 
 
-
-
-
 if __name__ == "__main__":
     url = 'https://webscraper.io/test-sites/e-commerce/static'
     fields = ['Name of item', 'Price']
@@ -518,3 +444,6 @@ if __name__ == "__main__":
 
     except Exception as e:
         print(f"An error occurred: {e}")
+
+
+
