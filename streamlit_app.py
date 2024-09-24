@@ -16,6 +16,7 @@ st.title("Universal Web Scraper 🦑")
 st.sidebar.title("Web Scraper Settings")
 model_selection = st.sidebar.selectbox("Select Model", options=list(PRICING.keys()), index=0)
 url_input = st.sidebar.text_input("Enter URL")
+max_pages = st.sidebar.number_input("Number of Pages to Scrape", min_value=1, max_value=100, value=5, step=1)
 
 
 # Tags input specifically in the sidebar
@@ -42,7 +43,7 @@ input_tokens = output_tokens = total_cost = 0  # Default values
 # Define the scraping function
 def perform_scrape():
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    raw_html = fetch_html_selenium(url_input)
+    raw_html = fetch_html_selenium(url_input, max_pages=max_pages)
     markdown = html_to_markdown_with_readability(raw_html)
     save_raw_data(markdown, timestamp)
     DynamicListingModel = create_dynamic_listing_model(fields)
@@ -52,6 +53,7 @@ def perform_scrape():
     df = save_formatted_data(formatted_data, timestamp)
 
     return df, formatted_data, markdown, input_tokens, output_tokens, total_cost, timestamp
+
 
 
 def create_dataframe(data):

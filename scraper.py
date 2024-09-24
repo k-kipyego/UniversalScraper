@@ -28,7 +28,7 @@ import google.generativeai as genai
 from groq import Groq
 
 
-from assets import USER_AGENTS,PRICING,HEADLESS_OPTIONS,SYSTEM_MESSAGE,USER_MESSAGE, GROQ_LLAMA_MODEL_FULLNAME
+from assets import USER_AGENTS,PRICING,HEADLESS_OPTIONS,SYSTEM_MESSAGE,USER_MESSAGE, GROQ_LLAMA_MODEL_FULLNAME, TIMEOUT_SETTINGS
 from groq import Groq
 
 client = Groq(api_key="your_api_key_here")
@@ -86,26 +86,22 @@ def click_accept_cookies(driver):
     except Exception as e:
         print(f"Error finding 'Accept Cookies' button: {e}")
 
-def fetch_html_selenium(url):
+def fetch_html_selenium(url, max_pages=3):
     driver = setup_selenium()
     try:
         driver.get(url)
         
         # Add random delays to mimic human behavior
-        time.sleep(1)  # Adjust this to simulate time for user to read or interact
+        time.sleep(random.uniform(1, 3))  # Adjust this to simulate time for user to read or interact
         driver.maximize_window()
         
-
         # Try to find and click the 'Accept Cookies' button
-        # click_accept_cookies(driver)
-
-        # Add more realistic actions like scrolling
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(2)  # Simulate time taken to scroll and read
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(1)
-        html = driver.page_source
-        return html
+        click_accept_cookies(driver)
+        
+        # Handle pagination and aggregate HTML
+        aggregated_html = handle_pagination(driver, max_pages=max_pages)
+        
+        return aggregated_html
     finally:
         driver.quit()
 
@@ -366,7 +362,61 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
         raise ValueError(f"Unsupported model: {selected_model}")
 
 
+def handle_pagination(driver, max_pages=3):
+    """
+    Handles pagination by navigating through pages up to max_pages.
+    
+    Args:
+        driver: Selenium WebDriver instance.
+        max_pages: Maximum number of pages to navigate.
+    
+    Returns:
+        aggregated_html: Concatenated HTML content from all pages.
+    """
+    aggregated_html = ""
+    current_page = 1
 
+    while current_page <= max_pages:
+        print(f"Processing page {current_page}...")
+        try:
+            # Wait for the page content to load
+            WebDriverWait(driver, TIMEOUT_SETTINGS["page_load"]).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            
+            # Get the current page's HTML
+            page_html = driver.page_source
+            aggregated_html += page_html
+            
+            # Identify the 'Next' button
+            next_button = None
+            possible_next_text = ["next", ">", ">>", "more", "→"]
+
+            for text in possible_next_text:
+                try:
+                    next_button = driver.find_element(By.XPATH, f"//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{text}')]")
+                    if next_button:
+                        break
+                except:
+                    continue
+
+            if next_button:
+                # Scroll to the 'Next' button and click it
+                actions = ActionChains(driver)
+                actions.move_to_element(next_button).perform()
+                time.sleep(random.uniform(0.5, 1.5))  # Random delay
+                next_button.click()
+                time.sleep(random.uniform(2, 4))  # Wait for the next page to load
+                current_page += 1
+            else:
+                print("No 'Next' button found. Ending pagination.")
+                break
+
+        except Exception as e:
+            print(f"Error during pagination on page {current_page}: {e}")
+            break
+
+    return aggregated_html
 
 def save_formatted_data(formatted_data, timestamp, output_folder='output'):
     # Ensure the output folder exists
