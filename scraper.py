@@ -3,6 +3,7 @@ import random
 import time
 import re
 import json
+import logging
 from datetime import datetime
 from typing import List, Dict, Type
 
@@ -21,6 +22,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import NoSuchElementException
 
 
 from openai import OpenAI
@@ -31,8 +33,15 @@ from groq import Groq
 from assets import USER_AGENTS,PRICING,HEADLESS_OPTIONS,SYSTEM_MESSAGE,USER_MESSAGE, GROQ_LLAMA_MODEL_FULLNAME, TIMEOUT_SETTINGS
 from groq import Groq
 
-client = Groq(api_key="your_api_key_here")
-
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler("scraper.log"),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger()
 # Set up the Chrome WebDriver options
 
 def setup_selenium():
@@ -365,55 +374,116 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
 def handle_pagination(driver, max_pages=3):
     """
     Handles pagination by navigating through pages up to max_pages.
-    
+    Supports various pagination mechanisms including 'Next' buttons and infinite scrolling.
+
     Args:
         driver: Selenium WebDriver instance.
         max_pages: Maximum number of pages to navigate.
-    
+
     Returns:
         aggregated_html: Concatenated HTML content from all pages.
     """
     aggregated_html = ""
     current_page = 1
+    last_page_source = ""
 
     while current_page <= max_pages:
-        print(f"Processing page {current_page}...")
+        logger.info(f"Processing page {current_page}...")
         try:
             # Wait for the page content to load
             WebDriverWait(driver, TIMEOUT_SETTINGS["page_load"]).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
-            
+
             # Get the current page's HTML
             page_html = driver.page_source
             aggregated_html += page_html
-            
-            # Identify the 'Next' button
-            next_button = None
-            possible_next_text = ["next", ">", ">>", "more", "→"]
 
-            for text in possible_next_text:
+            # Log current page URL and title
+            page_url = driver.current_url
+            page_title = driver.title
+            logger.info(f"Current Page URL: {page_url}")
+            logger.info(f"Page Title: {page_title}")
+
+            # Detect if the page has changed to avoid infinite loops
+            if page_html == last_page_source:
+                logger.info("No change in page source. Possibly reached the last page.")
+                break
+            last_page_source = page_html
+
+            # Attempt to find the 'Next' button using a comprehensive list of selectors
+            next_button = None
+            possible_next_selectors = [
+                "ul.pagination li.next a",
+                "ul.pagination li:last-child a",
+                "a[aria-label='Next']",
+                "button.next",
+                "button[aria-label='Next']",
+                "a.next-page",
+                "a.page-link[rel='next']",
+                "//a[contains(text(), 'Next')]",  
+                "//button[contains(text(), 'Next')]"
+            ]
+
+            for selector in possible_next_selectors:
                 try:
-                    next_button = driver.find_element(By.XPATH, f"//a[contains(translate(text(), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), '{text}')]")
-                    if next_button:
+                    if selector.startswith("//"):
+                        next_button = driver.find_element(By.XPATH, selector)
+                    else:
+                        next_button = driver.find_element(By.CSS_SELECTOR, selector)
+                    
+                    if next_button.is_displayed() and next_button.is_enabled():
+                        logger.info(f"'Next' button found using selector: {selector}")
                         break
-                except:
+                    else:
+                        logger.info(f"'Next' button found using selector: {selector} but it's not interactable.")
+                        next_button = None
+                except NoSuchElementException:
                     continue
 
             if next_button:
-                # Scroll to the 'Next' button and click it
-                actions = ActionChains(driver)
-                actions.move_to_element(next_button).perform()
+                # Scroll to the 'Next' button to ensure it's in view
+                driver.execute_script("arguments[0].scrollIntoView({ behavior: 'smooth', block: 'center' });", next_button)
                 time.sleep(random.uniform(0.5, 1.5))  # Random delay
-                next_button.click()
+
+                # Click the 'Next' button
+                try:
+                    # Try regular click first
+                    next_button.click()
+                except Exception as click_e:
+                    logger.warning(f"Regular click failed: {click_e}. Attempting JavaScript click.")
+                    try:
+                        # Fallback to JavaScript click
+                        driver.execute_script("arguments[0].click();", next_button)
+                    except Exception as js_click_e:
+                        logger.error(f"JavaScript click also failed: {js_click_e}")
+                        break
+
+                logger.info("Clicked the 'Next' button.")
                 time.sleep(random.uniform(2, 4))  # Wait for the next page to load
-                current_page += 1
             else:
-                print("No 'Next' button found. Ending pagination.")
+                logger.info("No active 'Next' button found. Attempting infinite scrolling.")
+                last_height = driver.execute_script("return document.body.scrollHeight")
+                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+                time.sleep(random.uniform(2, 4))  # Wait for new content to load
+                new_height = driver.execute_script("return document.body.scrollHeight")
+                
+                if new_height == last_height:
+                    logger.info("No more content detected after scrolling. Ending pagination.")
+                    break
+                else:
+                    logger.info("New content loaded via infinite scrolling.")
+
+            # Check for new content
+            new_content = driver.page_source
+            if new_content == last_page_source:
+                logger.info("No new content loaded. Ending pagination.")
                 break
 
+            current_page += 1
+
         except Exception as e:
-            print(f"Error during pagination on page {current_page}: {e}")
+            logger.error(f"Error during pagination on page {current_page}: {e}")
             break
 
     return aggregated_html
