@@ -243,130 +243,91 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
     if selected_model in ["gpt-4o-mini", "gpt-4o-2024-08-06"]:
         # Use OpenAI API
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
-        completion = client.beta.chat.completions.parse(
-            model=selected_model,
-            messages=[
-                {"role": "system", "content": SYSTEM_MESSAGE},
-                {"role": "user", "content": USER_MESSAGE + data},
-            ],
-            response_format=DynamicListingsContainer
-        )
-        # Calculate tokens using tiktoken
-        encoder = tiktoken.encoding_for_model(selected_model)
-        input_token_count = len(encoder.encode(USER_MESSAGE + data))
-        output_token_count = len(encoder.encode(json.dumps(completion.choices[0].message.parsed.dict())))
-        token_counts = {
-            "input_tokens": input_token_count,
-            "output_tokens": output_token_count
-        }
-        return completion.choices[0].message.parsed, token_counts
-    
-    elif selected_model == "mistral-nemo:latest":
-        prompt = f"{SYSTEM_MESSAGE}\n{USER_MESSAGE}\n\n{data}\n"
-
-        payload = {
-            "model": selected_model,
-            "prompt": prompt,
-            "max_tokens": 1200,
-            "temperature": 0.7
-        }
-
         try:
-            url = "http://localhost:11434/api/generate"
-            response = requests.post(
-                url,
-                headers={"Content-Type": "application/json"},
-                json=payload,
-                stream=True
+            completion = client.beta.chat.completions.parse(
+                model=selected_model,
+                messages=[
+                    {"role": "system", "content": SYSTEM_MESSAGE},
+                    {"role": "user", "content": USER_MESSAGE + data},
+                ],
+                response_format=DynamicListingsContainer
             )
-            
-            print(f"HTTP Status Code: {response.status_code}")
-            
-            response.raise_for_status()
-            
-            response_content = ""
-            for line in response.iter_lines():
-                if line:
-                    try:
-                        json_line = json.loads(line)
-                        if 'response' in json_line:
-                            response_content += json_line['response']
-                    except json.JSONDecodeError:
-                        response_content += line.decode('utf-8')
-            
-            if not response_content:
-                raise ValueError("No valid response received from Ollama API.")
-
-            print("Raw Response Content:")
-            print(response_content)
-            
-            # Post-processing step
-            response_content = response_content.strip()
-            if not response_content.startswith('{'):
-                response_content = '{' + response_content
-            if not response_content.endswith('}'):
-                response_content += '}'
-
-            try:
-                parsed_response = json.loads(response_content)
-            except json.JSONDecodeError:
-                parsed_response = {"text": response_content}
-            
-            # Calculate token counts
-            try:
-                encoder = tiktoken.encoding_for_model('gpt-3.5-turbo')
-            except KeyError:
-                encoder = tiktoken.get_encoding("cl100k_base")
-            input_token_count = len(encoder.encode(prompt))
-            output_token_count = len(encoder.encode(response_content))
+            # Calculate tokens using tiktoken
+            encoder = tiktoken.encoding_for_model(selected_model)
+            input_token_count = len(encoder.encode(USER_MESSAGE + data))
+            output_token_count = len(encoder.encode(json.dumps(completion.choices[0].message.parsed.dict())))
             token_counts = {
                 "input_tokens": input_token_count,
                 "output_tokens": output_token_count
             }
+            logger.info(f"Successfully processed data with {selected_model}")
+            return completion.choices[0].message.parsed, token_counts
+        except Exception as e:
+            logger.error(f"Error occurred while calling OpenAI API: {e}")
+            raise ValueError(f"Error in OpenAI API call: {e}")
+    
+        
+    elif selected_model == "Groq Llama3.1 70b":
+        # Dynamically generate the system message based on the schema
+        sys_message = generate_system_message(DynamicListingModel)
+        logger.debug(f"Generated system message: {sys_message}")
+
+        # Point to the local server
+        client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
+
+        try:
+            completion = client.chat.completions.create(
+                messages=[
+                    {"role": "system", "content": sys_message},
+                    {"role": "user", "content": USER_MESSAGE + data}
+                ],
+                model=GROQ_LLAMA_MODEL_FULLNAME,
+            )
+
+            # Extract the content from the response
+            response_content = completion.choices[0].message.content
+            
+            # Add debug logging
+            logger.debug(f"Raw response from Groq API: {response_content}")
+            
+            # Check if the response is empty or not in the expected format
+            if not response_content.strip():
+                logger.error("Empty response received from Groq API")
+                raise ValueError("Empty response received from Groq API")
+            
+            # Attempt to parse the JSON response
+            try:
+                parsed_response = json.loads(response_content)
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse JSON response: {e}")
+                logger.error(f"Raw response causing the error: {response_content}")
+                
+                # Attempt to clean and fix the JSON
+                cleaned_response = response_content.strip()
+                if not cleaned_response.startswith('{'):
+                    cleaned_response = '{' + cleaned_response
+                if not cleaned_response.endswith('}'):
+                    cleaned_response += '}'
+                
+                try:
+                    parsed_response = json.loads(cleaned_response)
+                    logger.info("Successfully parsed JSON after cleaning")
+                except json.JSONDecodeError:
+                    logger.error("Failed to parse JSON even after cleaning")
+                    raise ValueError(f"Invalid JSON response from Groq API: {e}")
+            
+            # Token counts
+            token_counts = {
+                "input_tokens": completion.usage.prompt_tokens,
+                "output_tokens": completion.usage.completion_tokens
+            }
 
             return parsed_response, token_counts
 
-        except requests.exceptions.HTTPError as http_err:
-            print(f"HTTP error occurred: {http_err}")
-            print(f"Response content: {response.text}")
-            raise ValueError(f"Ollama API request failed: {http_err}")
-        except requests.exceptions.RequestException as e:
-            print(f"Error communicating with Ollama API: {e}")
-            raise ValueError(f"Ollama API request failed: {e}")
         except Exception as e:
-            print(f"Unexpected error: {e}")
-            print(f"Response content: {response_content}")
-            raise ValueError(f"Failed to process Ollama API response: {e}")
-        
-    elif selected_model== "Groq Llama3.1 70b":
-        
-        # Dynamically generate the system message based on the schema
-        sys_message = generate_system_message(DynamicListingModel)
-        # print(SYSTEM_MESSAGE)
-        # Point to the local server
-        client = Groq(api_key=os.environ.get("GROQ_API_KEY"),)
+            logger.exception(f"Error occurred while calling Groq API: {e}")
+            raise ValueError(f"Error in Groq API call: {e}")
 
-        completion = client.chat.completions.create(
-        messages=[
-            {"role": "system","content": sys_message},
-            {"role": "user","content": USER_MESSAGE + data}
-        ],
-        model=GROQ_LLAMA_MODEL_FULLNAME,
-    )
-
-        # Extract the content from the response
-        response_content = completion.choices[0].message.content
-        
-        # Convert the content from JSON string to a Python dictionary
-        parsed_response = json.loads(response_content)
-        
-        # completion.usage
-        token_counts = {
-            "input_tokens": completion.usage.prompt_tokens,
-            "output_tokens": completion.usage.completion_tokens
-        }
-
-        return parsed_response, token_counts
     else:
         raise ValueError(f"Unsupported model: {selected_model}")
 
@@ -374,7 +335,7 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
 def handle_pagination(driver, max_pages=3):
     """
     Handles pagination by navigating through pages up to max_pages.
-    Supports various pagination mechanisms including 'Next' buttons and infinite scrolling.
+    Supports various pagination mechanisms including 'Next' buttons, symbols like '>', arrows, and infinite scrolling.
 
     Args:
         driver: Selenium WebDriver instance.
@@ -411,7 +372,7 @@ def handle_pagination(driver, max_pages=3):
                 break
             last_page_source = page_html
 
-            # Attempt to find the 'Next' button using a comprehensive list of selectors
+            # Attempt to find the 'Next' button using an enhanced list of selectors
             next_button = None
             possible_next_selectors = [
                 "ul.pagination li.next a",
@@ -422,23 +383,38 @@ def handle_pagination(driver, max_pages=3):
                 "a.next-page",
                 "a.page-link[rel='next']",
                 "//a[contains(text(), 'Next')]",  
-                "//button[contains(text(), 'Next')]"
+                "//button[contains(text(), 'Next')]",
+                # Additional selectors for symbols and arrows
+                "//a[contains(text(), '>') or contains(text(), '›') or contains(text(), '→') or contains(text(), '➔')]",  # XPath for links with symbols
+                "//button[contains(text(), '>') or contains(text(), '›') or contains(text(), '→') or contains(text(), '➔')]",  # XPath for buttons with symbols
+                "a[aria-label='Next Page']",
+                "button[title='Next']",
+                "a[title='Next']",
+                "button[data-testid='pagination-next']",
+                "a[data-testid='pagination-next']",
+                # Selectors targeting icon classes within buttons or links
+                "a .fa-arrow-right",
+                "button .fa-chevron-right",
+                "a .material-icons.arrow_forward",
+                "button .icon-next",
             ]
 
             for selector in possible_next_selectors:
                 try:
                     if selector.startswith("//"):
-                        next_button = driver.find_element(By.XPATH, selector)
+                        elements = driver.find_elements(By.XPATH, selector)
                     else:
-                        next_button = driver.find_element(By.CSS_SELECTOR, selector)
-                    
-                    if next_button.is_displayed() and next_button.is_enabled():
-                        logger.info(f"'Next' button found using selector: {selector}")
+                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+
+                    for element in elements:
+                        if element.is_displayed() and element.is_enabled():
+                            next_button = element
+                            logger.info(f"Found 'Next' button using selector: {selector}")
+                            break
+                    if next_button:
                         break
-                    else:
-                        logger.info(f"'Next' button found using selector: {selector} but it's not interactable.")
-                        next_button = None
-                except NoSuchElementException:
+                except Exception as e:
+                    logger.debug(f"Selector '{selector}' did not match: {e}")
                     continue
 
             if next_button:
@@ -450,6 +426,7 @@ def handle_pagination(driver, max_pages=3):
                 try:
                     # Try regular click first
                     next_button.click()
+
                 except Exception as click_e:
                     logger.warning(f"Regular click failed: {click_e}. Attempting JavaScript click.")
                     try:
@@ -467,7 +444,7 @@ def handle_pagination(driver, max_pages=3):
                 driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                 time.sleep(random.uniform(2, 4))  # Wait for new content to load
                 new_height = driver.execute_script("return document.body.scrollHeight")
-                
+
                 if new_height == last_height:
                     logger.info("No more content detected after scrolling. Ending pagination.")
                     break
@@ -489,48 +466,69 @@ def handle_pagination(driver, max_pages=3):
     return aggregated_html
 
 def save_formatted_data(formatted_data, timestamp, output_folder='output'):
-    # Ensure the output folder exists
-    os.makedirs(output_folder, exist_ok=True)
+    """
+    Saves the formatted data as a JSON and Excel file.
     
-    # Parse the formatted data if it's a JSON string (from Gemini API)
-    if isinstance(formatted_data, str):
-        try:
-            formatted_data_dict = json.loads(formatted_data)
-        except json.JSONDecodeError:
-            raise ValueError("The provided formatted data is a string but not valid JSON.")
-    else:
-        # Handle data from OpenAI or other sources
-        formatted_data_dict = formatted_data.dict() if hasattr(formatted_data, 'dict') else formatted_data
-
-    # Save the formatted data as JSON with timestamp in filename
-    json_output_path = os.path.join(output_folder, f'sorted_data_{timestamp}.json')
-    with open(json_output_path, 'w', encoding='utf-8') as f:
-        json.dump(formatted_data_dict, f, indent=4)
-    print(f"Formatted data saved to JSON at {json_output_path}")
-
-    # Prepare data for DataFrame
-    if isinstance(formatted_data_dict, dict):
-        # If the data is a dictionary containing lists, assume these lists are records
-        data_for_df = next(iter(formatted_data_dict.values())) if len(formatted_data_dict) == 1 else formatted_data_dict
-    elif isinstance(formatted_data_dict, list):
-        data_for_df = formatted_data_dict
-    else:
-        raise ValueError("Formatted data is neither a dictionary nor a list, cannot convert to DataFrame")
-
-    # Create DataFrame
+    Args:
+        formatted_data: The data to save.
+        timestamp: Timestamp string for file naming.
+        output_folder: The directory where the files will be saved.
+    
+    Returns:
+        The path to the saved JSON file.
+    """
     try:
-        df = pd.DataFrame(data_for_df)
-        print("DataFrame created successfully.")
-
-        # Save the DataFrame to an Excel file
-        excel_output_path = os.path.join(output_folder, f'sorted_data_{timestamp}.xlsx')
-        df.to_excel(excel_output_path, index=False)
-        print(f"Formatted data saved to Excel at {excel_output_path}")
+        # Ensure the output folder exists
+        os.makedirs(output_folder, exist_ok=True)
         
-        return df
+        # Parse the formatted data if it's a JSON string (from some APIs)
+        if isinstance(formatted_data, str):
+            try:
+                formatted_data_dict = json.loads(formatted_data)
+            except json.JSONDecodeError:
+                raise ValueError("The provided formatted data is a string but not valid JSON.")
+        else:
+            # Handle data from APIs that return objects (e.g., Pydantic models)
+            formatted_data_dict = formatted_data.dict() if hasattr(formatted_data, 'dict') else formatted_data
+
+        # Save the formatted data as JSON with timestamp in filename
+        json_output_path = os.path.join(output_folder, f'sorted_data_{timestamp}.json')
+        with open(json_output_path, 'w', encoding='utf-8') as f:
+            json.dump(formatted_data_dict, f, ensure_ascii=False, indent=4)
+        logger.info(f"Formatted data saved to JSON at {json_output_path}")
+
+        # Prepare data for DataFrame
+        if isinstance(formatted_data_dict, dict):
+            # If the data is a single dictionary, wrap it in a list
+            if all(isinstance(v, dict) for v in formatted_data_dict.values()):
+                data_for_df = list(formatted_data_dict.values())
+            else:
+                # If it's a flat dictionary, convert to a list of one item
+                data_for_df = [formatted_data_dict]
+        elif isinstance(formatted_data_dict, list):
+            data_for_df = formatted_data_dict
+        else:
+            raise ValueError("Formatted data is neither a dictionary nor a list, cannot convert to DataFrame")
+
+        # Create DataFrame
+        try:
+            df = pd.DataFrame(data_for_df)
+            logger.info("DataFrame created successfully.")
+
+            # Save the DataFrame to an Excel file
+            excel_output_path = os.path.join(output_folder, f'sorted_data_{timestamp}.xlsx')
+            df.to_excel(excel_output_path, index=False)
+            logger.info(f"Formatted data saved to Excel at {excel_output_path}")
+            
+            return json_output_path  # Return the path to the JSON file
+
+        except Exception as e:
+            logger.error(f"Error creating DataFrame or saving Excel: {e}")
+            return json_output_path  # Still return JSON path even if Excel fails
+
     except Exception as e:
-        print(f"Error creating DataFrame or saving Excel: {str(e)}")
-        return None
+        logger.error(f"Failed to save formatted data: {e}")
+        raise
 
 def calculate_price(token_counts, model):
     input_token_count = token_counts.get("input_tokens", 0)
