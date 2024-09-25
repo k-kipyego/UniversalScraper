@@ -18,29 +18,40 @@ logger.info("This is an info message")
 st.set_page_config(page_title="Universal Web Scraper")
 st.title("Universal Web Scraper 🦑")
 
+PREDEFINED_LABELS = [
+    "Title", "Price", "Description", "Category", "Brand", "Rating", 
+    "Review Count", "Availability", "Image URL", "Product ID"
+]
+
 # Sidebar components
 st.sidebar.title("Web Scraper Settings")
 model_selection = st.sidebar.selectbox("Select Model", options=list(PRICING.keys()), index=0)
 url_input = st.sidebar.text_input("Enter URL")
 max_pages = st.sidebar.number_input("Number of Pages to Scrape", min_value=1, max_value=100, value=5, step=1)
 
-# Tags input specifically in the sidebar
-tags = st.sidebar.empty()  # Create an empty placeholder in the sidebar
-tags = st_tags_sidebar(
-    label='Enter Fields to Extract:',
-    text='Press enter to add a tag',
-    value=[],  # Default values if any
-    suggestions=[],  # You can still offer suggestions, or keep it empty for complete freedom
-    maxtags=-1,  # Set to -1 for unlimited tags
-    key='tags_input'
+# Dropdown for predefined labels
+selected_labels = st.sidebar.multiselect(
+    "Select Fields to Extract:",
+    options=PREDEFINED_LABELS,
+    default=["Title", "Price", "Description"]
 )
+
+# Custom tags input
+custom_tags = st_tags_sidebar(
+    label='Enter Additional Custom Fields:',
+    text='Press enter to add a custom field',
+    value=[],
+    suggestions=[],
+    maxtags=-1,
+    key='custom_tags_input'
+)
+
+# Combine selected labels and custom tags
+fields = selected_labels + custom_tags
 
 st.sidebar.markdown("---")
 
-# Process tags into a list
-fields = tags
 
-# Initialize variables to store token and cost information
 input_tokens = output_tokens = total_cost = 0  # Default values
 
 # Define the scraping function
