@@ -19,8 +19,8 @@ st.set_page_config(page_title="Universal Web Scraper")
 st.title("Universal Web Scraper 🦑")
 
 PREDEFINED_LABELS = [
-    "Title", "Price", "Description", "Category", "Brand", "Rating", 
-    "Review Count", "Availability", "Image URL", "Product ID"
+    "Title", "Budget", "Description", "Category", "Deadline", "Date Posted", 
+    "Language", "Status", "Image URL", "Product ID"
 ]
 
 # Sidebar components
@@ -33,7 +33,7 @@ max_pages = st.sidebar.number_input("Number of Pages to Scrape", min_value=1, ma
 selected_labels = st.sidebar.multiselect(
     "Select Fields to Extract:",
     options=PREDEFINED_LABELS,
-    default=["Title", "Price", "Description"]
+    default=["Title", "Deadline",]
 )
 
 # Custom tags input
