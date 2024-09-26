@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime
 from scraper import fetch_html_selenium, save_raw_data, format_data, save_formatted_data, calculate_price, html_to_markdown_with_readability, create_dynamic_listing_model, create_listings_container_model
-from database_push import push_json_to_db  # Import the new module
+from database_push import push_json_to_db, push_website_info_to_db  # Update this import
 from assets import PRICING
 
 logging.basicConfig(level=logging.INFO)
@@ -18,39 +18,49 @@ logger.info("This is an info message")
 st.set_page_config(page_title="Universal Web Scraper")
 st.title("Universal Web Scraper 🦑")
 
-PREDEFINED_LABELS = [
-    "Title", "Budget", "Description", "Category", "Deadline", "Date Posted", 
-    "Language", "Status", "Image URL", "Product ID"
-]
+# Mapping of website names to URLs
+WEBSITE_URLS = {
+    "PPIP": "https://tenders.go.ke/tenders",
+    "Nigeria Government": "https://etenders.com.ng/#:~:text=Advertise%20your%20procurement%20needs%20and%20connect%20with%20a%20wide%20array",
+    "South Africa Government": "https://www.etenders.gov.za/Home/opportunities?id=1",
+    "Senegal Tenders": "https://www.senegaltenders.com/computer-and-related-services-tenders.php"
+}
+
+# Predefined tags for each website
+PREDEFINED_TAGS = {
+    "https://tenders.go.ke/tenders": ["Tender No", "Description", "Category", "Deadline", "Location"],
+    "https://etenders.com.ng/#:~:text=Advertise%20your%20procurement%20needs%20and%20connect%20with%20a%20wide%20array": ["Title", "Date Added", "Deadline", "Category"],
+    "https://www.etenders.gov.za/Home/opportunities?id=1": ["Category", "Description", "Added", "Deadline"],
+    "https://www.senegaltenders.com/computer-and-related-services-tenders.php": ["Title", "Ref No", "Deadline"]
+}
 
 # Sidebar components
 st.sidebar.title("Web Scraper Settings")
+
+# Dropdown to select the website by name
+selected_website_name = st.sidebar.selectbox("Select Website", options=list(WEBSITE_URLS.keys()))
+
+# Get the corresponding URL for the selected website name
+selected_website_url = WEBSITE_URLS[selected_website_name]
+
+# Populate tags based on the selected website URL
+selected_tags = PREDEFINED_TAGS[selected_website_url]
+
+# Display the selected tags
+st.sidebar.markdown("### Selected Tags")
+st.sidebar.write(selected_tags)
+
+# Other sidebar components
 model_selection = st.sidebar.selectbox("Select Model", options=list(PRICING.keys()), index=0)
-url_input = st.sidebar.text_input("Enter URL")
-max_pages = st.sidebar.number_input("Number of Pages to Scrape", min_value=1, max_value=100, value=5, step=1)
+url_input = st.sidebar.text_input("Enter URL", value=selected_website_url)
+max_pages = st.sidebar.number_input("Number of Pages to Scrape", min_value=1, max_value=100, value=3, step=1)
 
 # Dropdown for predefined labels
 selected_labels = st.sidebar.multiselect(
     "Select Fields to Extract:",
-    options=PREDEFINED_LABELS,
-    default=["Title", "Deadline",]
+    options=selected_tags,
+    default=selected_tags  # Default to all tags for the selected website
 )
-
-# Custom tags input
-custom_tags = st_tags_sidebar(
-    label='Enter Additional Custom Fields:',
-    text='Press enter to add a custom field',
-    value=[],
-    suggestions=[],
-    maxtags=-1,
-    key='custom_tags_input'
-)
-
-# Combine selected labels and custom tags
-fields = selected_labels + custom_tags
-
-st.sidebar.markdown("---")
-
 
 input_tokens = output_tokens = total_cost = 0  # Default values
 
@@ -60,16 +70,16 @@ def perform_scrape():
     raw_html = fetch_html_selenium(url_input, max_pages=int(max_pages))
     markdown = html_to_markdown_with_readability(raw_html)
     raw_file_path = save_raw_data(markdown, timestamp)
-    DynamicListingModel = create_dynamic_listing_model(fields)
+    DynamicListingModel = create_dynamic_listing_model(selected_labels)
     DynamicListingsContainer = create_listings_container_model(DynamicListingModel)
     formatted_data, tokens_count = format_data(markdown, DynamicListingsContainer, DynamicListingModel, model_selection)
     input_tokens, output_tokens, total_cost = calculate_price(tokens_count, model=model_selection)
     formatted_json_path = save_formatted_data(formatted_data, timestamp)  # Receives JSON path
     
-    # Push the JSON data to PostgreSQL
-    push_json_to_db(formatted_json_path, table_name='scraped_data')
+    # Convert DynamicListingsContainer to a dictionary
+    formatted_data_dict = formatted_data.dict()
     
-    return formatted_data, markdown, input_tokens, output_tokens, total_cost, timestamp
+    return formatted_data_dict, markdown, input_tokens, output_tokens, total_cost, timestamp, formatted_json_path
 
 def create_dataframe(data):
     print("Debug: Type of data:", type(data))
@@ -103,14 +113,30 @@ def create_dataframe(data):
 
     return df
 
-# Handling button press for scraping
 if 'perform_scrape' not in st.session_state:
     st.session_state['perform_scrape'] = False
 
 if st.sidebar.button("Scrape"):
     with st.spinner('Please wait... Data is being scraped and pushed to the database.'):
         try:
-            formatted_data, markdown, input_tokens, output_tokens, total_cost, timestamp = perform_scrape()
+            formatted_data, markdown, input_tokens, output_tokens, total_cost, timestamp, formatted_json_path = perform_scrape()
+            
+            # Push the JSON data to PostgreSQL
+            push_json_to_db(formatted_json_path, table_name='scraped_data')
+            
+            # Push website information to PostgreSQL
+            try:
+                push_website_info_to_db(
+                    url=url_input,
+                    name=selected_website_name,
+                    labels=selected_labels,
+                    table_name='website_info'
+                )
+                st.success("Website information successfully saved to the database.")
+            except Exception as e:
+                st.error(f"Failed to save website information to the database: {e}")
+                logger.error(f"Database insertion error: {e}", exc_info=True)
+            
             st.session_state['results'] = (formatted_data, markdown, input_tokens, output_tokens, total_cost, timestamp)
             st.session_state['perform_scrape'] = True
         except Exception as e:

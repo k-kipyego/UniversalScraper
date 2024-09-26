@@ -143,6 +143,49 @@ def push_json_to_db(json_file_path: str, table_name: str = 'scraped_data'):
             conn.close()
             logger.info("Database connection closed.")
 
+def push_website_info_to_db(url, name, labels, table_name='website_info'):
+    """
+    Push website information to a separate table in the database.
+    
+    Args:
+    url (str): The URL of the scraped website
+    name (str): The name of the website
+    labels (list): List of labels for the scraped content
+    table_name (str): Name of the table to insert the data into
+    """
+    conn = None
+    try:
+        conn = psycopg2.connect(
+            dbname=os.getenv('POSTGRES_NAME'),
+            user=os.getenv('POSTGRES_USER'),
+            password=os.getenv('POSTGRES_PASSWORD'),
+            host=os.getenv('POSTGRES_HOST'),
+            port=os.getenv('POSTGRES_PORT')
+        )
+        cur = conn.cursor()
+
+        # Convert labels list to CSV string
+        labels_csv = ','.join(labels)
+
+        # Insert the website information
+        cur.execute(
+            f"INSERT INTO {table_name} (url, name, labels) VALUES (%s, %s, %s)",
+            (url, name, labels_csv)
+        )
+
+        conn.commit()
+        logger.info(f"Website information successfully inserted into {table_name}")
+
+    except (Exception, psycopg2.Error) as error:
+        logger.error(f"Error while connecting to PostgreSQL or inserting data: {error}", exc_info=True)
+        raise
+
+    finally:
+        if conn:
+            cur.close()
+            conn.close()
+    
+
 if __name__ == "__main__":
     import argparse
 
