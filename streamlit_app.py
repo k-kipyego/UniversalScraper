@@ -4,7 +4,7 @@ import pandas as pd
 import json
 import logging
 from datetime import datetime
-from scraper import fetch_html_selenium, save_raw_data, format_data, save_formatted_data, calculate_price, html_to_markdown_with_readability, create_dynamic_listing_model, create_listings_container_model
+from scraper import fetch_html_selenium, save_raw_data, format_data, save_formatted_data, calculate_price, html_to_markdown_with_readability, create_dynamic_listing_model, create_listings_container_model  
 from database_push import push_json_to_db, push_website_info_to_db  # Update this import
 from assets import PRICING
 
@@ -23,17 +23,28 @@ WEBSITE_URLS = {
     "PPIP": "https://tenders.go.ke/tenders",
     "Nigeria Government": "https://etenders.com.ng/#:~:text=Advertise%20your%20procurement%20needs%20and%20connect%20with%20a%20wide%20array",
     "South Africa Government": "https://www.etenders.gov.za/Home/opportunities?id=1",
-    "Senegal Tenders": "https://www.senegaltenders.com/computer-and-related-services-tenders.php"
+    "Senegal Tenders": "https://www.senegaltenders.com/computer-and-related-services-tenders.php",
+    "UNGM" : "https://www.ungm.org/Public/Notice",
+    "IOM": "https://www.iom.int/procurement-opportunities",
+    "Malawi": "https://www.ppda.mw/tenders"
 }
 
-# Predefined tags for each website
+UNIVERSAL_LABELS = [
+    "Title", "Description", "Date Posted", "Deadline", "Reference Number",
+    "Category", "Location", "Language", "Contact", "Budget", "Type"
+]
+
+# Predefined tags for each website (can include both universal and specific labels)
 PREDEFINED_TAGS = {
     "https://tenders.go.ke/tenders": ["Tender No", "Description", "Category", "Deadline", "Location"],
-    "https://etenders.com.ng/#:~:text=Advertise%20your%20procurement%20needs%20and%20connect%20with%20a%20wide%20array": ["Title", "Date Added", "Deadline", "Category"],
-    "https://www.etenders.gov.za/Home/opportunities?id=1": ["Category", "Description", "Added", "Deadline"],
-    "https://www.senegaltenders.com/computer-and-related-services-tenders.php": ["Title", "Ref No", "Deadline"]
+    "https://etenders.com.ng/#:~:text=Advertise%20your%20procurement%20needs%20and%20connect%20with%20a%20wide%20array": ["Title", "Date Posted", "Deadline", "Category"],
+    "https://www.etenders.gov.za/Home/opportunities?id=1": ["Category", "Description", "Date Posted", "Deadline"],
+    "https://www.senegaltenders.com/computer-and-related-services-tenders.php": ["Title", "Ref No", "Deadline"],
+    "https://www.ungm.org/Public/Notice": ["Title", "Category", "Date Posted", "Deadline", "Type", "Location"],
+    "https://www.iom.int/procurement-opportunities": ["Title", "Category", "Date Posted", "Deadline", "Type", "Location"],
+    "https://www.ppda.mw/tenders": ["Title", "Category", "Date Posted", "Deadline", "Reference Number"]
+    
 }
-
 # Sidebar components
 st.sidebar.title("Web Scraper Settings")
 
@@ -43,23 +54,23 @@ selected_website_name = st.sidebar.selectbox("Select Website", options=list(WEBS
 # Get the corresponding URL for the selected website name
 selected_website_url = WEBSITE_URLS[selected_website_name]
 
-# Populate tags based on the selected website URL
-selected_tags = PREDEFINED_TAGS[selected_website_url]
+# Combine universal labels with predefined tags for the selected website
+combined_labels = list(set(UNIVERSAL_LABELS + PREDEFINED_TAGS.get(selected_website_url, [])))
 
-# Display the selected tags
-st.sidebar.markdown("### Selected Tags")
-st.sidebar.write(selected_tags)
+# Display the combined labels
+
+
 
 # Other sidebar components
 model_selection = st.sidebar.selectbox("Select Model", options=list(PRICING.keys()), index=0)
 url_input = st.sidebar.text_input("Enter URL", value=selected_website_url)
 max_pages = st.sidebar.number_input("Number of Pages to Scrape", min_value=1, max_value=100, value=3, step=1)
 
-# Dropdown for predefined labels
+# Dropdown for selecting labels
 selected_labels = st.sidebar.multiselect(
     "Select Fields to Extract:",
-    options=selected_tags,
-    default=selected_tags  # Default to all tags for the selected website
+    options=combined_labels,
+    default=PREDEFINED_TAGS.get(selected_website_url, UNIVERSAL_LABELS[:5])  # Default to predefined tags or first 5 universal labels
 )
 
 input_tokens = output_tokens = total_cost = 0  # Default values
@@ -67,17 +78,31 @@ input_tokens = output_tokens = total_cost = 0  # Default values
 # Define the scraping function
 def perform_scrape():
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    raw_html = fetch_html_selenium(url_input, max_pages=int(max_pages))
+    raw_html_list = fetch_html_selenium(url_input, max_pages=int(max_pages))
+    
+    # Concatenate all HTML pages into a single string
+    raw_html = "\n".join(raw_html_list)  # Join the list into a single string
+    
     markdown = html_to_markdown_with_readability(raw_html)
     raw_file_path = save_raw_data(markdown, timestamp)
+    
+    # Create dynamic models
     DynamicListingModel = create_dynamic_listing_model(selected_labels)
     DynamicListingsContainer = create_listings_container_model(DynamicListingModel)
-    formatted_data, tokens_count = format_data(markdown, DynamicListingsContainer, DynamicListingModel, model_selection)
-    input_tokens, output_tokens, total_cost = calculate_price(tokens_count, model=model_selection)
-    formatted_json_path = save_formatted_data(formatted_data, timestamp)  # Receives JSON path
     
-    # Convert DynamicListingsContainer to a dictionary
-    formatted_data_dict = formatted_data.dict()
+    # Format data
+    formatted_data, tokens_count = format_data(markdown, DynamicListingsContainer, DynamicListingModel, model_selection)
+    
+    # Check if formatted_data is already a dict, if not, convert it
+    if isinstance(formatted_data, dict):
+        formatted_data_dict = formatted_data  # It's already a dict
+    elif hasattr(formatted_data, 'dict'):
+        formatted_data_dict = formatted_data.dict()  # Convert if it has a dict method
+    else:
+        raise ValueError("Formatted data is not in an expected format.")
+
+    input_tokens, output_tokens, total_cost = calculate_price(tokens_count, model=model_selection)
+    formatted_json_path = save_formatted_data(formatted_data_dict, timestamp)  # Receives JSON path
     
     return formatted_data_dict, markdown, input_tokens, output_tokens, total_cost, timestamp, formatted_json_path
 

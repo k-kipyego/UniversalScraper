@@ -22,8 +22,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import NoSuchElementException
-
+from selenium.common.exceptions import TimeoutException, NoSuchElementException
 
 from openai import OpenAI
 import google.generativeai as genai
@@ -95,24 +94,21 @@ def click_accept_cookies(driver):
     except Exception as e:
         print(f"Error finding 'Accept Cookies' button: {e}")
 
-def fetch_html_selenium(url, max_pages=3):
+def fetch_html_selenium(url, max_pages=10):
     driver = setup_selenium()
     try:
         driver.get(url)
-        
-        # Add random delays to mimic human behavior
-        time.sleep(random.uniform(1, 3))  # Adjust this to simulate time for user to read or interact
+        time.sleep(random.uniform(1, 3))
         driver.maximize_window()
-        
-        # Try to find and click the 'Accept Cookies' button
         click_accept_cookies(driver)
         
-        # Handle pagination and aggregate HTML
-        aggregated_html = handle_pagination(driver, max_pages=max_pages)
+        # Use the updated handle_pagination function
+        list_of_html_pages = handle_pagination(driver, max_pages=max_pages)
         
-        return aggregated_html
+        return list_of_html_pages
     finally:
         driver.quit()
+
 
 def clean_html(html_content):
     soup = BeautifulSoup(html_content, 'html.parser')
@@ -240,6 +236,11 @@ def generate_system_message(listing_model: BaseModel) -> str:
 
 def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_model):
     token_counts = {}
+
+    # Convert data to string if it's a list
+    if isinstance(data, list):
+        data = json.dumps(data)  # Convert list to JSON string
+
     if selected_model in ["gpt-4o-mini", "gpt-4o-2024-08-06"]:
         # Use OpenAI API
         client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))
@@ -265,8 +266,7 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
         except Exception as e:
             logger.error(f"Error occurred while calling OpenAI API: {e}")
             raise ValueError(f"Error in OpenAI API call: {e}")
-    
-        
+
     elif selected_model == "Groq Llama3.1 70b":
         # Dynamically generate the system message based on the schema
         sys_message = generate_system_message(DynamicListingModel)
@@ -276,6 +276,10 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
         client = Groq(api_key=os.environ.get("GROQ_API_KEY"))
 
         try:
+            # Ensure data is a string for Groq API
+            if isinstance(data, list):
+                data = json.dumps(data)  # Convert list to JSON string
+
             completion = client.chat.completions.create(
                 messages=[
                     {"role": "system", "content": sys_message},
@@ -331,139 +335,86 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
     else:
         raise ValueError(f"Unsupported model: {selected_model}")
 
-
-def handle_pagination(driver, max_pages=3):
+def find_next_element(driver):
     """
-    Handles pagination by navigating through pages up to max_pages.
-    Supports various pagination mechanisms including 'Next' buttons, symbols like '>', arrows, and infinite scrolling.
+    Attempts to find the 'Next' button or link using various selectors.
+    """
+    possible_next_selectors = [
+        "ul.pagination li.next a", "ul.pagination li:last-child a",
+        "a[aria-label='Next']", "button.next", "button[aria-label='Next']",
+        "a.next-page", "a.page-link[rel='next']",
+        "//a[contains(text(), 'Next')]", "//button[contains(text(), 'Next')]",
+        "//a[contains(@class, 'next') or contains(@id, 'next')]",
+        "//button[contains(@class, 'next') or contains(@id, 'next')]",
+        "//a[contains(., '›') or contains(., '→') or contains(., '»')]",
+        "//button[contains(., '›') or contains(., '→') or contains(., '»')]"
+    ]
 
+    for selector in possible_next_selectors:
+        try:
+            if selector.startswith("//"):
+                element = driver.find_element(By.XPATH, selector)
+            else:
+                element = driver.find_element(By.CSS_SELECTOR, selector)
+            return element
+        except NoSuchElementException:
+            continue
+    
+    return None
+
+def handle_pagination(driver, max_pages=10, timeout=30):
+    """
+    Function to handle pagination and collect HTML from all pages.
+    
     Args:
-        driver: Selenium WebDriver instance.
-        max_pages: Maximum number of pages to navigate.
-
+    driver: Selenium WebDriver instance
+    max_pages: Maximum number of pages to scrape (default: 10)
+    timeout: Maximum time to wait for elements (default: 30 seconds)
+    
     Returns:
-        aggregated_html: Concatenated HTML content from all pages.
+    list_of_html_pages: List containing HTML from all scraped pages
     """
-    aggregated_html = ""
+    list_of_html_pages = []
     current_page = 1
-    last_page_source = ""
 
     while current_page <= max_pages:
         logger.info(f"Processing page {current_page}...")
+
         try:
             # Wait for the page content to load
-            WebDriverWait(driver, TIMEOUT_SETTINGS["page_load"]).until(
+            WebDriverWait(driver, timeout).until(
                 EC.presence_of_element_located((By.TAG_NAME, "body"))
             )
 
             # Get the current page's HTML
             page_html = driver.page_source
-            aggregated_html += page_html
 
-            # Log current page URL and title
-            page_url = driver.current_url
-            page_title = driver.title
-            logger.info(f"Current Page URL: {page_url}")
-            logger.info(f"Page Title: {page_title}")
+            # Append the page HTML to the list
+            list_of_html_pages.append(page_html)
 
-            # Detect if the page has changed to avoid infinite loops
-            if page_html == last_page_source:
-                logger.info("No change in page source. Possibly reached the last page.")
-                break
-            last_page_source = page_html
+            # Log current page info
+            logger.info(f"Page Title: {driver.title}")
 
-            # Attempt to find the 'Next' button using an enhanced list of selectors
-            next_button = None
-            possible_next_selectors = [
-                "ul.pagination li.next a",
-                "ul.pagination li:last-child a",
-                "a[aria-label='Next']",
-                "button.next",
-                "button[aria-label='Next']",
-                "a.next-page",
-                "a.page-link[rel='next']",
-                "//a[contains(text(), 'Next')]",  
-                "//button[contains(text(), 'Next')]",
-                # Additional selectors for symbols and arrows
-                "//a[contains(text(), '>') or contains(text(), '›') or contains(text(), '→') or contains(text(), '➔')]",  # XPath for links with symbols
-                "//button[contains(text(), '>') or contains(text(), '›') or contains(text(), '→') or contains(text(), '➔')]",  # XPath for buttons with symbols
-                "a[aria-label='Next Page']",
-                "button[title='Next']",
-                "a[title='Next']",
-                "button[data-testid='pagination-next']",
-                "a[data-testid='pagination-next']",
-                # Selectors targeting icon classes within buttons or links
-                "a .fa-arrow-right",
-                "button .fa-chevron-right",
-                "a .material-icons.arrow_forward",
-                "button .icon-next",
-            ]
+            # Attempt to find the 'Next' button or link
+            next_element = find_next_element(driver)
 
-            for selector in possible_next_selectors:
-                try:
-                    if selector.startswith("//"):
-                        elements = driver.find_elements(By.XPATH, selector)
-                    else:
-                        elements = driver.find_elements(By.CSS_SELECTOR, selector)
-
-                    for element in elements:
-                        if element.is_displayed() and element.is_enabled():
-                            next_button = element
-                            logger.info(f"Found 'Next' button using selector: {selector}")
-                            break
-                    if next_button:
-                        break
-                except Exception as e:
-                    logger.debug(f"Selector '{selector}' did not match: {e}")
-                    continue
-
-            if next_button:
-                # Scroll to the 'Next' button to ensure it's in view
-                driver.execute_script("arguments[0].scrollIntoView({ behavior: 'smooth', block: 'center' });", next_button)
-                time.sleep(random.uniform(0.5, 1.5))  # Random delay
-
-                # Click the 'Next' button
-                try:
-                    # Try regular click first
-                    next_button.click()
-
-                except Exception as click_e:
-                    logger.warning(f"Regular click failed: {click_e}. Attempting JavaScript click.")
-                    try:
-                        # Fallback to JavaScript click
-                        driver.execute_script("arguments[0].click();", next_button)
-                    except Exception as js_click_e:
-                        logger.error(f"JavaScript click also failed: {js_click_e}")
-                        break
-
-                logger.info("Clicked the 'Next' button.")
-                time.sleep(random.uniform(2, 4))  # Wait for the next page to load
+            if next_element and next_element.is_displayed() and next_element.is_enabled():
+                # Click the 'Next' button/link and wait for the page to load
+                next_element.click()
+                time.sleep(random.uniform(2, 4))  # Random delay to mimic human behavior
+                current_page += 1
             else:
-                logger.info("No active 'Next' button found. Attempting infinite scrolling.")
-                last_height = driver.execute_script("return document.body.scrollHeight")
-                driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-                time.sleep(random.uniform(2, 4))  # Wait for new content to load
-                new_height = driver.execute_script("return document.body.scrollHeight")
-
-                if new_height == last_height:
-                    logger.info("No more content detected after scrolling. Ending pagination.")
-                    break
-                else:
-                    logger.info("New content loaded via infinite scrolling.")
-
-            # Check for new content
-            new_content = driver.page_source
-            if new_content == last_page_source:
-                logger.info("No new content loaded. Ending pagination.")
+                logger.info("No 'Next' button found. Stopping pagination.")
                 break
 
-            current_page += 1
-
+        except TimeoutException:
+            logger.error(f"Timeout occurred while loading page {current_page}")
+            break
         except Exception as e:
             logger.error(f"Error during pagination on page {current_page}: {e}")
             break
 
-    return aggregated_html
+    return list_of_html_pages
 
 def save_formatted_data(formatted_data, timestamp, output_folder='output'):
     """
@@ -552,12 +503,15 @@ if __name__ == "__main__":
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
 
         # Scrape data
-        raw_html = fetch_html_selenium(url)
+        list_of_html_pages = fetch_html_selenium(url)
 
-        markdown = html_to_markdown_with_readability(raw_html)
+        all_markdown = ""
+        for i, html_content in enumerate(list_of_html_pages, 1):
+            markdown = html_to_markdown_with_readability(html_content)
+            all_markdown += f"\n\n--- Page {i} ---\n\n" + markdown
 
         # Save raw data
-        save_raw_data(markdown, timestamp)
+        save_raw_data(all_markdown, timestamp)
 
         # Create the dynamic listing model
         DynamicListingModel = create_dynamic_listing_model(fields)
@@ -567,7 +521,7 @@ if __name__ == "__main__":
 
         # Format data using the correct model name
         formatted_data, token_counts = format_data(
-            markdown, 
+            all_markdown, 
             DynamicListingsContainer,
             DynamicListingModel,
             "mistral-nemo:latest"  # Updated to match assets.py
