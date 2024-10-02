@@ -24,8 +24,8 @@ DB_PARAMS = {
 
 # Predefined labels (update this list as needed)
 PREDEFINED_LABELS = [
-    "Title", "Description", "Date", "Deadline", "Reference Number",
-    "Category", "Location", "Organization", "Contact", "Value"
+   "Title", "Description", "Date Posted", "Deadline", "Reference Number",
+    "Category", "Location", "Language", "Contact", "Budget", "Type"
 ]
 
 def get_db_connection():
@@ -69,6 +69,7 @@ def fetch_scraped_data(conn) -> List[Dict]:
             cursor.execute(query)
             data = cursor.fetchall()
             logger.info(f"Fetched {len(data)} rows from scraped_data table.")
+            logger.debug(f"Fetched data: {data}")  # Log the fetched data
             return data
     except Exception as e:
         logger.error(f"Failed to fetch data from scraped_data table: {e}")
@@ -91,8 +92,12 @@ def process_and_insert_data(conn, scraped_data: List[Dict], target_table: str):
                     # Extract listings if present
                     listings = json_data.get('listings', [json_data])
                     
+                    # Include website name and URL from the row
+                    website_name = row.get('website_name', 'Unknown')
+                    website_url = row.get('website_url', 'Unknown')
+
                     for listing in listings:
-                        values = [row['website_name'], row['website_url']]
+                        values = [website_name, website_url]  # Add website name and URL
                         values.extend([listing.get(label, '') for label in PREDEFINED_LABELS])
                         values.append(row['id'])  # Add original_id
                         cursor.execute(insert_query, values)

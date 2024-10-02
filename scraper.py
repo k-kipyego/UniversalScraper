@@ -22,7 +22,7 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException, NoSuchElementException
+from selenium.common.exceptions import TimeoutException, NoSuchElementException, ElementClickInterceptedException, StaleElementReferenceException
 
 from openai import OpenAI
 import google.generativeai as genai
@@ -339,27 +339,74 @@ def find_next_element(driver):
     """
     Attempts to find the 'Next' button or link using various selectors.
     """
+    # Dismiss cookie consent overlay if present
+    try:
+        cookie_consent_button = driver.find_element(By.XPATH, "//button[contains(text(), 'Accept') or contains(text(), 'Agree')]")
+        if cookie_consent_button.is_displayed():
+            cookie_consent_button.click()
+            logger.info("Clicked on cookie consent button.")
+    except NoSuchElementException:
+        logger.info("No cookie consent button found.")
+    except Exception as e:
+        logger.error(f"Error dismissing cookie consent: {e}")
+
     possible_next_selectors = [
-        "ul.pagination li.next a", "ul.pagination li:last-child a",
-        "a[aria-label='Next']", "button.next", "button[aria-label='Next']",
-        "a.next-page", "a.page-link[rel='next']",
-        "//a[contains(text(), 'Next')]", "//button[contains(text(), 'Next')]",
+        "ul.pagination li.next a", 
+        "ul.pagination li:last-child a",
+        "a[aria-label='Next']", 
+        "button.next", 
+        "button[aria-label='Next']",
+        "a.next-page", 
+        "a.page-link[rel='next']",
+        "//a[contains(text(), 'Next')]",
+        "//button[contains(text(), 'Next')]",
+        "//span[contains(text(), 'Next')]",
         "//a[contains(@class, 'next') or contains(@id, 'next')]",
         "//button[contains(@class, 'next') or contains(@id, 'next')]",
-        "//a[contains(., '›') or contains(., '→') or contains(., '»')]",
-        "//button[contains(., '›') or contains(., '→') or contains(., '»')]"
+        "//a[contains(., '›') or contains(., '→') or contains(., '»') or contains(., '>')]",
+        "//button[contains(., '›') or contains(., '→') or contains(., '»') or contains(., '>')]",
+        "//a[contains(text(), 'Next Page')]",
+        "//a[contains(text(), 'Next') and not(contains(@class, 'disabled'))]",
+        "//li[contains(@class, 'next')]/a",
+        "//li[contains(@class, 'pagination-next')]/a",
+        "//a[@class='pagination-next']",
+        "//a[@class='next-button']",
+        "//a[@class='next-link']",
+        "//span[@class='v-btn__content' and @data-no-activator='']"  # New selector added
     ]
 
     for selector in possible_next_selectors:
         try:
+            # Check if the selector is an XPath expression or CSS selector
             if selector.startswith("//"):
-                element = driver.find_element(By.XPATH, selector)
+                element = driver.find_element(By.XPATH, selector)  # XPath selector
             else:
-                element = driver.find_element(By.CSS_SELECTOR, selector)
+                element = driver.find_element(By.CSS_SELECTOR, selector)  # CSS selector
+
+            # Scroll into view
+            driver.execute_script("arguments[0].scrollIntoView();", element)
+
+            # Wait until the element is clickable
+            WebDriverWait(driver, 10).until(EC.element_to_be_clickable((By.XPATH if selector.startswith("//") else By.CSS_SELECTOR, selector)))
+
+            element.click()
+            logger.info(f"Clicked on 'Next' button using selector: {selector}")
+            
+            # After click, wait for page load to avoid stale element
+            WebDriverWait(driver, 10).until(EC.presence_of_element_located((By.TAG_NAME, 'body')))
+            
             return element
-        except NoSuchElementException:
+
+        except (NoSuchElementException, ElementClickInterceptedException, TimeoutException) as e:
+            logger.warning(f"Next button not found or not clickable for selector: {selector} - {e}")
             continue
-    
+        except StaleElementReferenceException:
+            logger.warning(f"Stale element reference after clicking 'Next' button for selector: {selector}. Retrying...")
+            continue  # Retry locating the element
+        except Exception as e:
+            logger.error(f"Unexpected error for selector: {selector} - {e}")
+            continue
+
     return None
 
 def handle_pagination(driver, max_pages=10, timeout=30):
@@ -399,9 +446,9 @@ def handle_pagination(driver, max_pages=10, timeout=30):
             next_element = find_next_element(driver)
 
             if next_element and next_element.is_displayed() and next_element.is_enabled():
-                # Click the 'Next' button/link and wait for the page to load
-                next_element.click()
-                time.sleep(random.uniform(2, 4))  # Random delay to mimic human behavior
+                # Wait a random time to mimic human behavior
+                time.sleep(random.uniform(2, 4))
+                
                 current_page += 1
             else:
                 logger.info("No 'Next' button found. Stopping pagination.")
@@ -410,11 +457,15 @@ def handle_pagination(driver, max_pages=10, timeout=30):
         except TimeoutException:
             logger.error(f"Timeout occurred while loading page {current_page}")
             break
+        except StaleElementReferenceException:
+            logger.error(f"Stale element reference on page {current_page}. Retrying...")
+            continue  # Retry the loop if element is stale
         except Exception as e:
             logger.error(f"Error during pagination on page {current_page}: {e}")
             break
 
     return list_of_html_pages
+
 
 def save_formatted_data(formatted_data, timestamp, output_folder='output'):
     """
@@ -433,7 +484,7 @@ def save_formatted_data(formatted_data, timestamp, output_folder='output'):
         os.makedirs(output_folder, exist_ok=True)
         
         # Parse the formatted data if it's a JSON string (from some APIs)
-        if isinstance(formatted_data, str):
+        if isinstance(formatted_data, str): 
             try:
                 formatted_data_dict = json.loads(formatted_data)
             except json.JSONDecodeError:

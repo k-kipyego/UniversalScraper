@@ -43,7 +43,7 @@ def get_db_connection():
 
 def create_table(conn, table_name: str):
     """
-    Creates a table in the PostgreSQL database if it doesn't already exist.
+    Creates the scraped_data table in the PostgreSQL database if it doesn't already exist.
     
     Args:
         conn: Active PostgreSQL connection object.
@@ -52,8 +52,10 @@ def create_table(conn, table_name: str):
     create_table_query = f"""
     CREATE TABLE IF NOT EXISTS {table_name} (
         id SERIAL PRIMARY KEY,
-        file_name TEXT,
+        file_name TEXT NOT NULL,
         data JSONB NOT NULL,
+        website_name TEXT,  -- Added website name
+        website_url TEXT,   -- Added website URL
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """
@@ -67,7 +69,7 @@ def create_table(conn, table_name: str):
         conn.rollback()
         raise
 
-def insert_json_data(conn, table_name: str, file_name: str, json_data: Any):
+def insert_json_data(conn, table_name: str, file_name: str, json_data: Any, website_name: str, website_url: str):
     """
     Inserts JSON data into the specified PostgreSQL table.
     
@@ -76,14 +78,17 @@ def insert_json_data(conn, table_name: str, file_name: str, json_data: Any):
         table_name: Name of the table where data will be inserted.
         file_name: Name of the JSON file.
         json_data: The JSON data to insert.
+        website_name: The name of the website.
+        website_url: The URL of the website.
     """
     try:
+        logger.debug(f"Inserting data into {table_name}: file_name={file_name}, website_name={website_name}, website_url={website_url}")
         with conn.cursor() as cursor:
             insert_query = f"""
-            INSERT INTO {table_name} (file_name, data)
-            VALUES (%s, %s)
+            INSERT INTO {table_name} (file_name, data, website_name, website_url)
+            VALUES (%s, %s, %s, %s)
             """
-            cursor.execute(insert_query, (file_name, Json(json_data)))
+            cursor.execute(insert_query, (file_name, Json(json_data), website_name, website_url))
             conn.commit()
             logger.info(f"Data from '{file_name}' inserted successfully into '{table_name}'.")
     except Exception as e:
@@ -91,13 +96,15 @@ def insert_json_data(conn, table_name: str, file_name: str, json_data: Any):
         conn.rollback()
         raise
 
-def push_json_to_db(json_file_path: str, table_name: str = 'scraped_data'):
+def push_json_to_db(json_file_path: str, table_name: str = 'scraped_data', website_name: str = '', website_url: str = ''):
     """
     Reads a JSON file and pushes its content to the PostgreSQL database.
     
     Args:
         json_file_path: Path to the JSON file.
         table_name: Target table name in the database.
+        website_name: The name of the website.
+        website_url: The URL of the website.
     """
     try:
         # Check if file exists
@@ -133,8 +140,7 @@ def push_json_to_db(json_file_path: str, table_name: str = 'scraped_data'):
         logger.debug(f"Extracted file name: {file_name}")
         
         # Insert the JSON data into the database
-        insert_json_data(conn, table_name, file_name, json_data)
-        
+        insert_json_data(conn, table_name, file_name, json_data, website_name, website_url)        
     except Exception as e:
         logger.exception(f"An error occurred while pushing JSON to DB: {e}")
         raise
@@ -143,34 +149,59 @@ def push_json_to_db(json_file_path: str, table_name: str = 'scraped_data'):
             conn.close()
             logger.info("Database connection closed.")
 
-def push_website_info_to_db(url, name, labels, table_name='website_info'):
+def create_website_info_table(conn, table_name: str):
+    """
+    Creates the website_info table in the PostgreSQL database if it doesn't already exist.
+    
+    Args:
+        conn: Active PostgreSQL connection object.
+        table_name: Name of the table to create.
+    """
+    create_table_query = f"""
+    CREATE TABLE IF NOT EXISTS {table_name} (
+        id SERIAL PRIMARY KEY,
+        website_url TEXT NOT NULL,
+        website_name TEXT NOT NULL,
+        labels TEXT[] NOT NULL,  -- Ensure this column is defined as an array
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+    """
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(create_table_query)
+            conn.commit()
+            logger.info(f"Table '{table_name}' is ready.")
+    except Exception as e:
+        logger.error(f"Failed to create table '{table_name}': {e}")
+        conn.rollback()
+        raise        
+
+def push_website_info_to_db(website_url, website_name, labels, table_name='website_info'):
     """
     Push website information to a separate table in the database.
     
     Args:
-    url (str): The URL of the scraped website
-    name (str): The name of the website
+    website_url (str): The URL of the scraped website
+    website_name (str): The name of the website
     labels (list): List of labels for the scraped content
     table_name (str): Name of the table to insert the data into
     """
     conn = None
     try:
-        conn = psycopg2.connect(
-            dbname=os.getenv('POSTGRES_NAME'),
-            user=os.getenv('POSTGRES_USER'),
-            password=os.getenv('POSTGRES_PASSWORD'),
-            host=os.getenv('POSTGRES_HOST'),
-            port=os.getenv('POSTGRES_PORT')
-        )
+        conn = get_db_connection()
+        
+        # Create the website_info table if it doesn't exist
+        create_website_info_table(conn, table_name)
+
         cur = conn.cursor()
 
-        # Convert labels list to CSV string
-        labels_csv = ','.join(labels)
+        # Convert labels list to PostgreSQL array format
+        labels_array = '{' + ','.join(labels) + '}'
 
         # Insert the website information
         cur.execute(
-            f"INSERT INTO {table_name} (url, name, labels) VALUES (%s, %s, %s)",
-            (url, name, labels_csv)
+            f"INSERT INTO {table_name} (website_url, website_name, labels) VALUES (%s, %s, %s)",
+            (website_url, website_name, labels_array)
         )
 
         conn.commit()

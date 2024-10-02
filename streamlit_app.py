@@ -5,7 +5,7 @@ import json
 import logging
 from datetime import datetime
 from scraper import fetch_html_selenium, save_raw_data, format_data, save_formatted_data, calculate_price, html_to_markdown_with_readability, create_dynamic_listing_model, create_listings_container_model  
-from database_push import push_json_to_db, push_website_info_to_db  # Update this import
+from database_push import push_json_to_db, push_website_info_to_db 
 from assets import PRICING
 
 logging.basicConfig(level=logging.INFO)
@@ -21,12 +21,32 @@ st.title("Universal Web Scraper 🦑")
 # Mapping of website names to URLs
 WEBSITE_URLS = {
     "PPIP": "https://tenders.go.ke/tenders",
-    "Nigeria Government": "https://etenders.com.ng/#:~:text=Advertise%20your%20procurement%20needs%20and%20connect%20with%20a%20wide%20array",
-    "South Africa Government": "https://www.etenders.gov.za/Home/opportunities?id=1",
-    "Senegal Tenders": "https://www.senegaltenders.com/computer-and-related-services-tenders.php",
     "UNGM" : "https://www.ungm.org/Public/Notice",
     "IOM": "https://www.iom.int/procurement-opportunities",
-    "Malawi": "https://www.ppda.mw/tenders"
+    "Malawi": "https://www.ppda.mw/tenders",
+    "UNDP": "https://procurement-notices.undp.org/#:~:text=RFP/JSB-AC/2409/52%20Develop%20a%20national%20e-procurement",
+    "AFDB": "https://www.afdb.org/en/projects-and-operations/procurement#:~:text=Procurement%20procedures%20must%20offer%20equal%20opportunities%20to",
+    "KRA" : "https://www.kra.go.ke/tenders#:~:text=E%20-%20Procurement%20We%20are%20always%20working%20closely%20with%20our",
+    "Swaziland": "https://esppra.co.sz/sppra/tender.php",
+    "Nigeria" : "https://www.publicprocurement.ng/#:~:text=ministry%20for%20local%20government%20and%20chieftaincy%20affairs,%20yobe",
+    "Uganda": "https://gpp.ppda.go.ug/public/bid-invitations",
+    "EC": "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/calls-for-tenders?keywords=software&isExactMatch=true&order=DESC&pageNumber=1&pageSize=50&sortBy=startDate",
+    "Georgia": "https://ssl.doas.state.ga.us/gpr/",
+    "EIA" : "https://www.eib.org/en/about/procurement/all/index.htm?q=&sortColumn=configuration.contentStart&sortDir=desc&pageNumber=0&itemPerPage=25&pageable=true&la=EN&deLa=EN&yearTo=&orYearTo=true&yearFrom=&orYearFrom=true&procurementStatus=&or_g_procurementInformations_type=true",
+    "UN": "https://www.un.org/Depts/ptd/eoi",
+    "DepEd": "https://depedpines.com/procurement-notices/",
+    "GeBiz": "https://www.gebiz.gov.sg/ptn/opportunity/BOListing.xhtml?origin=menu",
+    "Mauritius": "https://publicprocurement.govmu.org/publicprocurement/?page_id=720",
+    "Bermuda": "https://www.gov.bm/procurement-notices",
+    "Caribbean Bank": "https://www.caribank.org/work-with-us/procurement/general-procurement-notices",
+    "Hong Kong": "https://pcms2.gld.gov.hk/iprod/#/sta00305?lang-setting=en-US&results_pageNo=1",
+    "Aus Tender": "https://www.tenders.gov.au/atm",
+    "Sri Lanka": "https://www.slcgmel.org/procurement-notices/",
+    "ADB": "https://www.adb.org/projects/tenders/group/goods",
+    "HANDS": "https://hands.ehawaii.gov/hands/opportunities",
+    "GoC": "https://canadabuys.canada.ca/en/tender-opportunities",
+    "Scotland": "https://www.publiccontractsscotland.gov.uk/Search/Search_MainPage.aspx"
+
 }
 
 UNIVERSAL_LABELS = [
@@ -37,13 +57,32 @@ UNIVERSAL_LABELS = [
 # Predefined tags for each website (can include both universal and specific labels)
 PREDEFINED_TAGS = {
     "https://tenders.go.ke/tenders": ["Tender No", "Description", "Category", "Deadline", "Location"],
-    "https://etenders.com.ng/#:~:text=Advertise%20your%20procurement%20needs%20and%20connect%20with%20a%20wide%20array": ["Title", "Date Posted", "Deadline", "Category"],
-    "https://www.etenders.gov.za/Home/opportunities?id=1": ["Category", "Description", "Date Posted", "Deadline"],
-    "https://www.senegaltenders.com/computer-and-related-services-tenders.php": ["Title", "Ref No", "Deadline"],
     "https://www.ungm.org/Public/Notice": ["Title", "Category", "Date Posted", "Deadline", "Type", "Location"],
     "https://www.iom.int/procurement-opportunities": ["Title", "Category", "Date Posted", "Deadline", "Type", "Location"],
-    "https://www.ppda.mw/tenders": ["Title", "Category", "Date Posted", "Deadline", "Reference Number"]
-    
+    "https://www.ppda.mw/tenders": ["Title", "Category", "Date Posted", "Deadline", "Reference Number"],
+    "https://procurement-notices.undp.org/#:~:text=RFP/JSB-AC/2409/52%20Develop%20a%20national%20e-procurement": ["Title", "Ref No", "Date Posted", "Deadline", "Type", "Location"],
+    "https://www.afdb.org/en/projects-and-operations/procurement#:~:text=Procurement%20procedures%20must%20offer%20equal%20opportunities%20to": ["Title", "Date Posted"],
+    "https://www.kra.go.ke/tenders#:~:text=E%20-%20Procurement%20We%20are%20always%20working%20closely%20with%20our": ["Title", "Date Posted", "Deadline"],
+    "https://esppra.co.sz/sppra/tender.php": ["Title", "Ref No", "Deadline", "Date Posted"],
+    "https://www.publicprocurement.ng/#:~:text=ministry%20for%20local%20government%20and%20chieftaincy%20affairs,%20yobe": ["Description", "Date Added", "Deadline", "Type"],
+    "https://gpp.ppda.go.ug/public/bid-invitations": ["Title", "Deadline", "Type"],
+    "https://ec.europa.eu/info/funding-tenders/opportunities/portal/screen/opportunities/calls-for-tenders?keywords=software&isExactMatch=true&order=DESC&pageNumber=1&pageSize=50&sortBy=startDate": ["Title", "Deadline", "Type", "Status", "Date Posted"],
+    "https://ssl.doas.state.ga.us/gpr/": ["Title", "Ref No", "Status", "Deadline", "Date Posted"],
+    "https://www.eib.org/en/about/procurement/all/index.htm?q=&sortColumn=configuration.contentStart&sortDir=desc&pageNumber=0&itemPerPage=25&pageable=true&la=EN&deLa=EN&yearTo=&orYearTo=true&yearFrom=&orYearFrom=true&procurementStatus=&or_g_procurementInformations_type=true": ["Title", "Type", "Status", "Date Posted"],
+    "https://www.un.org/Depts/ptd/eoi" : ["Title","Date Posted", "Deadline", "Reference Number"],
+    "https://depedpines.com/procurement-notices/" : ["Title", "Date Posted", "Deadline"],
+    "https://www.gebiz.gov.sg/ptn/opportunity/BOListing.xhtml?origin=menu" : ["Ref No", "Title", "Date Posted", "Deadline", "Cartegory", "Status"],
+    "https://publicprocurement.govmu.org/publicprocurement/?page_id=720":  ["Description", "Reference Number", "Deadline", "Cartegory",],
+    "https://www.gov.bm/procurement-notices":   ["Title", "Date Posted", "Deadline", "Ref No", ],
+    "https://www.caribank.org/work-with-us/procurement/general-procurement-notices": ["Title", "Cartegory", "Location"],
+    "https://pcms2.gld.gov.hk/iprod/#/sta00305?lang-setting=en-US&results_pageNo=1" : ["Description", "Deadline", "Ref No", "Cartegory"],
+    "https://www.tenders.gov.au/atm" : ["Description", "Deadline", "Cartegory", "Ref No",],
+    "https://www.slcgmel.org/procurement-notices/" : ["Title", "Date Posted", "Type"],
+    "https://www.adb.org/projects/tenders/group/goods" : ["Title", "Date Posted", "Deadline", "Type", "Ref No", "Status"],
+    "https://hands.ehawaii.gov/hands/opportunities" : ["Title", "Location", "Deadline", "Cartegory", "Ref No", "Status", "Date Posted"],
+    "https://canadabuys.canada.ca/en/tender-opportunities" : ["Title", "Cartegory", "Deadline", "Date Posted"],
+    "https://www.publiccontractsscotland.gov.uk/Search/Search_MainPage.aspx" : ["Title", "Ref No", "Deadline", "Date Posted", "Type"],
+
 }
 # Sidebar components
 st.sidebar.title("Web Scraper Settings")
@@ -105,7 +144,6 @@ def perform_scrape():
     formatted_json_path = save_formatted_data(formatted_data_dict, timestamp)  # Receives JSON path
     
     return formatted_data_dict, markdown, input_tokens, output_tokens, total_cost, timestamp, formatted_json_path
-
 def create_dataframe(data):
     print("Debug: Type of data:", type(data))
     print("Debug: Content of data:", data)
@@ -147,13 +185,13 @@ if st.sidebar.button("Scrape"):
             formatted_data, markdown, input_tokens, output_tokens, total_cost, timestamp, formatted_json_path = perform_scrape()
             
             # Push the JSON data to PostgreSQL
-            push_json_to_db(formatted_json_path, table_name='scraped_data')
+            push_json_to_db(formatted_json_path, table_name='scraped_data', website_name=selected_website_name, website_url=selected_website_url)
             
             # Push website information to PostgreSQL
             try:
                 push_website_info_to_db(
-                    url=url_input,
-                    name=selected_website_name,
+                    website_url=selected_website_url,
+                    website_name=selected_website_name,
                     labels=selected_labels,
                     table_name='website_info'
                 )
