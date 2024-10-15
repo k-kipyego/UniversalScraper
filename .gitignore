@@ -1,0 +1,17 @@
+
+# Ignore the environment variable file
+.env
+.vscode
+
+# Ignore Python cache files
+__pycache__/
+output/
+
+# Ignore virtual environments
+.venv/
+venv
+
+# Ignore logs and temporary files
+*.log
+*.tmp
+chromedriver-win64
