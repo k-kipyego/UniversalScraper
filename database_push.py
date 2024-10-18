@@ -71,7 +71,7 @@ def create_table(conn, table_name: str):
 
 def insert_json_data(conn, table_name: str, file_name: str, json_data: Any, website_name: str, website_url: str):
     """
-    Inserts JSON data into the specified PostgreSQL table.
+    Inserts JSON data into the specified PostgreSQL table or updates existing data if the website already exists.
     
     Args:
         conn: Active PostgreSQL connection object.
@@ -84,15 +84,35 @@ def insert_json_data(conn, table_name: str, file_name: str, json_data: Any, webs
     try:
         logger.debug(f"Inserting data into {table_name}: file_name={file_name}, website_name={website_name}, website_url={website_url}")
         with conn.cursor() as cursor:
-            insert_query = f"""
-            INSERT INTO {table_name} (file_name, data, website_name, website_url)
-            VALUES (%s, %s, %s, %s)
+            # Check if the record already exists
+            select_query = f"""
+            SELECT data FROM {table_name} 
+            WHERE website_name = %s AND website_url = %s
             """
-            cursor.execute(insert_query, (file_name, Json(json_data), website_name, website_url))
+            cursor.execute(select_query, (website_name, website_url))
+            existing_data = cursor.fetchone()
+
+            if existing_data:
+                # Update the existing record by merging the new JSON data
+                update_query = f"""
+                UPDATE {table_name} 
+                SET data = data || %s 
+                WHERE website_name = %s AND website_url = %s
+                """
+                cursor.execute(update_query, (Json(json_data), website_name, website_url))
+                logger.info(f"Data from '{file_name}' updated successfully for '{website_name}'.")
+            else:
+                # Insert new record
+                insert_query = f"""
+                INSERT INTO {table_name} (file_name, data, website_name, website_url)
+                VALUES (%s, %s, %s, %s)
+                """
+                cursor.execute(insert_query, (file_name, Json(json_data), website_name, website_url))
+                logger.info(f"Data from '{file_name}' inserted successfully into '{table_name}'.")
+
             conn.commit()
-            logger.info(f"Data from '{file_name}' inserted successfully into '{table_name}'.")
     except Exception as e:
-        logger.error(f"Failed to insert data from '{file_name}' into '{table_name}': {e}")
+        logger.error(f"Failed to insert or update data from '{file_name}' into '{table_name}': {e}")
         conn.rollback()
         raise
 
@@ -198,14 +218,32 @@ def push_website_info_to_db(website_url, website_name, labels, table_name='websi
         # Convert labels list to PostgreSQL array format
         labels_array = '{' + ','.join(labels) + '}'
 
-        # Insert the website information
-        cur.execute(
-            f"INSERT INTO {table_name} (website_url, website_name, labels) VALUES (%s, %s, %s)",
-            (website_url, website_name, labels_array)
-        )
+        # Check if the record already exists
+        select_query = f"""
+        SELECT labels FROM {table_name} 
+        WHERE website_url = %s AND website_name = %s
+        """
+        cur.execute(select_query, (website_url, website_name))
+        existing_data = cur.fetchone()
+
+        if existing_data:
+            # Update the existing record by merging the new labels
+            update_query = f"""
+            UPDATE {table_name} 
+            SET labels = array_cat(labels, %s) 
+            WHERE website_url = %s AND website_name = %s
+            """
+            cur.execute(update_query, (labels_array, website_url, website_name))
+            logger.info(f"Website information updated successfully for '{website_name}'.")
+        else:
+            # Insert new record
+            cur.execute(
+                f"INSERT INTO {table_name} (website_url, website_name, labels) VALUES (%s, %s, %s)",
+                (website_url, website_name, labels_array)
+            )
+            logger.info(f"Website information successfully inserted into {table_name}")
 
         conn.commit()
-        logger.info(f"Website information successfully inserted into {table_name}")
 
     except (Exception, psycopg2.Error) as error:
         logger.error(f"Error while connecting to PostgreSQL or inserting data: {error}", exc_info=True)
