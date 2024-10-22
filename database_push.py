@@ -71,7 +71,7 @@ def create_table(conn, table_name: str):
 
 def insert_json_data(conn, table_name: str, file_name: str, json_data: Any, website_name: str, website_url: str):
     """
-    Inserts JSON data into the specified PostgreSQL table or updates existing data if the website already exists.
+    Inserts JSON data into the specified PostgreSQL table or updates existing data if new opportunities arise.
     
     Args:
         conn: Active PostgreSQL connection object.
@@ -93,14 +93,22 @@ def insert_json_data(conn, table_name: str, file_name: str, json_data: Any, webs
             existing_data = cursor.fetchone()
 
             if existing_data:
-                # Update the existing record by merging the new JSON data
-                update_query = f"""
-                UPDATE {table_name} 
-                SET data = data || %s 
-                WHERE website_name = %s AND website_url = %s
-                """
-                cursor.execute(update_query, (Json(json_data), website_name, website_url))
-                logger.info(f"Data from '{file_name}' updated successfully for '{website_name}'.")
+                # Check for new opportunities in the new JSON data
+                existing_opportunities = existing_data[0].get('opportunities', [])
+                new_opportunities = json_data.get('opportunities', [])
+
+                # Only update if there are new opportunities
+                if not set(new_opportunities).issubset(existing_opportunities):
+                    # Update the existing record by merging the new JSON data
+                    update_query = f"""
+                    UPDATE {table_name} 
+                    SET data = data || %s 
+                    WHERE website_name = %s AND website_url = %s
+                    """
+                    cursor.execute(update_query, (Json(json_data), website_name, website_url))
+                    logger.info(f"Data from '{file_name}' updated successfully for '{website_name}'.")
+                else:
+                    logger.info(f"No new opportunities to update for '{website_name}'.")
             else:
                 # Insert new record
                 insert_query = f"""
