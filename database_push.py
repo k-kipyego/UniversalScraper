@@ -70,17 +70,6 @@ def create_table(conn, table_name: str):
         raise
 
 def insert_json_data(conn, table_name: str, file_name: str, json_data: Any, website_name: str, website_url: str):
-    """
-    Inserts JSON data into the specified PostgreSQL table or updates existing data if new opportunities arise.
-    
-    Args:
-        conn: Active PostgreSQL connection object.
-        table_name: Name of the table where data will be inserted.
-        file_name: Name of the JSON file.
-        json_data: The JSON data to insert.
-        website_name: The name of the website.
-        website_url: The URL of the website.
-    """
     try:
         logger.debug(f"Inserting data into {table_name}: file_name={file_name}, website_name={website_name}, website_url={website_url}")
         with conn.cursor() as cursor:
@@ -93,22 +82,37 @@ def insert_json_data(conn, table_name: str, file_name: str, json_data: Any, webs
             existing_data = cursor.fetchone()
 
             if existing_data:
-                # Check for new opportunities in the new JSON data
-                existing_opportunities = existing_data[0].get('opportunities', [])
-                new_opportunities = json_data.get('opportunities', [])
-
-                # Only update if there are new opportunities
-                if not set(new_opportunities).issubset(existing_opportunities):
-                    # Update the existing record by merging the new JSON data
-                    update_query = f"""
-                    UPDATE {table_name} 
-                    SET data = data || %s 
-                    WHERE website_name = %s AND website_url = %s
-                    """
-                    cursor.execute(update_query, (Json(json_data), website_name, website_url))
-                    logger.info(f"Data from '{file_name}' updated successfully for '{website_name}'.")
+                # existing_data is a tuple, so we need to access the first element
+                existing_data_json = existing_data[0]
+                
+                # Handle both list and dictionary data structures
+                if isinstance(json_data, list):
+                    if isinstance(existing_data_json, list):
+                        # Merge lists while removing duplicates
+                        merged_data = list({str(item): item for item in existing_data_json + json_data}.values())
+                    else:
+                        # Convert existing data to list if it's not already
+                        merged_data = list({str(item): item for item in [existing_data_json] + json_data}.values())
                 else:
-                    logger.info(f"No new opportunities to update for '{website_name}'.")
+                    # Handle dictionary data
+                    existing_opportunities = existing_data_json.get('opportunities', []) if isinstance(existing_data_json, dict) else []
+                    new_opportunities = json_data.get('opportunities', []) if isinstance(json_data, dict) else []
+                    
+                    # Only update if there are new opportunities
+                    if not set(str(x) for x in new_opportunities).issubset(str(x) for x in existing_opportunities):
+                        merged_data = json_data
+                    else:
+                        logger.info(f"No new opportunities to update for '{website_name}'.")
+                        return
+
+                # Update the existing record
+                update_query = f"""
+                UPDATE {table_name} 
+                SET data = %s 
+                WHERE website_name = %s AND website_url = %s
+                """
+                cursor.execute(update_query, (Json(merged_data), website_name, website_url))
+                logger.info(f"Data from '{file_name}' updated successfully for '{website_name}'.")
             else:
                 # Insert new record
                 insert_query = f"""
