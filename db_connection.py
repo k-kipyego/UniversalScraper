@@ -7,7 +7,6 @@ from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 from psycopg2.extras import RealDictRow
 
-
 # Load environment variables
 load_dotenv()
 
@@ -50,7 +49,8 @@ def create_structured_table(conn, table_name: str):
         website_url TEXT,
         {columns},
         original_id INTEGER,
-        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE (title, description, reference_number)
     );
     """
     try:
@@ -62,7 +62,6 @@ def create_structured_table(conn, table_name: str):
         logger.error(f"Failed to create table '{table_name}': {e}")
         conn.rollback()
         raise
-
 
 def fetch_scraped_data(conn) -> List[Dict]:
     """Fetches all data from the scraped_data table."""
@@ -86,15 +85,16 @@ def fetch_scraped_data(conn) -> List[Dict]:
         raise
 
 def process_and_insert_data(conn, scraped_data: List[RealDictRow], target_table: str):
-    """Processes scraped data, merges listings from different rows, and inserts them into the structured table."""
+    """Processes scraped data, merges listings from different rows, and inserts only new data into the structured table."""
     insert_query = f"""
     INSERT INTO {target_table} 
     (website_name, website_url, {', '.join([label.lower().replace(' ', '_') for label in PREDEFINED_LABELS])}, original_id)
     VALUES (%s, %s, {', '.join(['%s' for _ in PREDEFINED_LABELS])}, %s)
+    ON CONFLICT (title, description, reference_number) DO NOTHING
     """
     
-    inserted_listings = set()
     inserted_count = 0
+    skipped_count = 0
     
     try:
         with conn.cursor() as cursor:
@@ -137,31 +137,28 @@ def process_and_insert_data(conn, scraped_data: List[RealDictRow], target_table:
                         if isinstance(listing, (dict, RealDictRow)):
                             listing_dict = dict(listing) if isinstance(listing, RealDictRow) else listing
                             
-                            unique_identifier = f"{listing_dict.get('Title', '')}-{listing_dict.get('Deadline', '')}"
-                            
-                            if unique_identifier in inserted_listings:
-                                continue
-                            
                             values = [website_name, website_url]
                             values.extend([listing_dict.get(label, '') for label in PREDEFINED_LABELS])
                             values.append(row_dict.get('id', None))
                             
-                            logger.debug(f"Inserting listing with values: {values}")
+                            logger.debug(f"Attempting to insert listing with values: {values}")
                             cursor.execute(insert_query, values)
-                            inserted_count += 1
-                            inserted_listings.add(unique_identifier)
+                            
+                            if cursor.rowcount > 0:
+                                inserted_count += 1
+                            else:
+                                skipped_count += 1
                             
                 except Exception as e:
                     logger.error(f"Error processing entry: {e}", exc_info=True)
                     continue
             
             conn.commit()
-            logger.info(f"Successfully merged and inserted {inserted_count} rows into {target_table}")
+            logger.info(f"Successfully inserted {inserted_count} new rows and skipped {skipped_count} existing rows in {target_table}")
     except Exception as e:
         logger.error(f"Failed to merge and insert data: {e}", exc_info=True)
         conn.rollback()
         raise
-
 
 def main():
     target_table = 'structured_scraped_data'
