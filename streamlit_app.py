@@ -113,6 +113,9 @@ WEBSITE_URLS = {
     "PSHD": "https://pshealthpunjab.gov.pk/Home/Tenders",
     "Mahapreit": "https://mahapreit.in/page/tender",
     "Prasarb": "https://prasarbharati.gov.in/pbtenders/",
+    "Durban": "https://www.durban.gov.za/pages/business/procurement",
+    "NCCF": "https://nccf-india.com/tenders/",
+    "IOB": "https://www.iob.in/TenderDetails.aspx?Tendertype=Tender",
 }
 
 UNIVERSAL_LABELS = [
@@ -188,7 +191,10 @@ PREDEFINED_TAGS = {
     "https://www.aiims.edu/index.php/en/tenders/aiims-tender" : ["Title", "Deadline", "Date Posted", "Cartegory"],
     "https://bolpatra.gov.np/egp/searchOpportunity": ["Title", "Deadline", "Date Posted", "Type", "Ref No"],
     "https://pshealthpunjab.gov.pk/Home/Tenders": ["Title",  "Date Posted",],
-    "https://mahapreit.in/page/tender": ["Title", "Cartegory", "Date Posted", "Type", "Ref No"]
+    "https://mahapreit.in/page/tender": ["Title", "Cartegory", "Date Posted", "Type", "Ref No"],
+    "https://www.durban.gov.za/pages/business/procurement": ["Title", "Deadline", "Cartegory", "Type", "Ref No"],
+    "https://nccf-india.com/tenders/": ["Title", "Date Posted"],
+    "https://www.iob.in/TenderDetails.aspx?Tendertype=Tender":  ["Description", "Deadline", "Date Posted",]
     
 }
 
