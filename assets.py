@@ -102,17 +102,14 @@ NUMBER_SCROLL=2
 LLAMA_MODEL_FULLNAME="lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF"
 GROQ_LLAMA_MODEL_FULLNAME="llama-3.1-70b-versatile"
 
-SYSTEM_MESSAGE = """You are an intelligent text extraction and conversion assistant. Your task is to extract structured information 
-                        from the given text and convert it into a pure JSON format. The JSON should contain only the structured data extracted from the text, 
-                        with no additional commentary, explanations, or extraneous information. 
-                        You could encounter cases where you can't find the data of the fields you have to extract or the data will be in a foreign language.
-                        Please process the following text and provide the output in pure JSON format with no words before or after the JSON:"""
+SYSTEM_MESSAGE = """You are an intelligent text extraction and conversion assistant. Your task is to extract structured information from the given text and convert it into a pure JSON format.
+ Focus specifically on procurement opportunities related to software and IT solutions, including custom software development, ERP systems (financial, HR, supply chain), 
+ IT consulting and advisory services, Digital skills training, and capacity building. Only extract information that explicitly mentions these areas or 
+ related keywords such as 'software', 'IT', 'cloud', 'data management', 'cybersecurity', 'system integration', etc. 
+ If you encounter any content that is not in English, translate it into English before extracting the relevant information. Provide output in pure JSON format with no additional commentary."""
 
-USER_MESSAGE = f"Extract the following information from the provided text:\nPage content:\n\n"
-        
-
-
-
+USER_MESSAGE = f"""Extract procurement opportunity information from the provided text, focusing exclusively on software and IT solutions, including custom software development, ERP solutions, IT consulting, Digital training, and related technical services. 
+Only include information that contains keywords such as 'software', 'IT', 'cloud', 'data management', 'cybersecurity', and 'system integration'. If any part of the content is not in English, please translate it into English before extracting the information. Return only structured JSON data. Page content:\n\n"""
 
 PROMPT_PAGINATION = """
 You are an assistant that extracts pagination elements from markdown content of websites your goal as a universal pagination scrapper of urls from all websites no matter how different they are.

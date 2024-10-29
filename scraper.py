@@ -209,20 +209,22 @@ def generate_system_message(listing_model: BaseModel) -> str:
 
     # Generate the system message dynamically
     system_message = f"""
-    You are an intelligent text extraction and conversion assistant. Your task is to extract structured information 
-                        from the given text and convert it into a pure JSON format. The JSON should contain only the structured data extracted from the text, 
-                        with no additional commentary, explanations, or extraneous information. 
-                        You could encounter cases where you can't find the data of the fields you have to extract or the data will be in a foreign language.
-                        Please process the following text and provide the output in pure JSON format with no words before or after the JSON:
-    Please ensure the output strictly follows this schema:
-
-    {{
-        "listings": [
-            {{
-                {schema_structure}
-            }}
-        ]
-    }} """
+     You are an intelligent text extraction and conversion assistant. Your task is to extract structured information from the given 
+     text and convert it into a pure JSON format. Focus specifically on procurement opportunities related to software and IT solutions, including custom software development, 
+     ERP systems (financial, HR, supply chain), IT consulting and advisory services, digital skills training, and capacity building. 
+     Additionally, include government and enterprise solutions such as Public Financial Management (budgeting, treasury, revenue), Identity Management (national ID, biometrics), 
+     Tax/Customs platforms (revenue collection, debt recovery), Business Process Outsourcing services, and related technical services like system integration, cloud solutions, and data management. 
+     Only extract information that explicitly mentions these areas or related keywords such as 'software', 'IT', 'cloud', 'data management', 'cybersecurity', and 'system integration'. 
+     If you encounter any content that is not in English, translate it into English before extracting the relevant information. 
+     Provide output in pure JSON format with no additional commentary, and ensure the output strictly follows this schema:
+ 
+     {{
+         "listings": [
+             {{
+                 {schema_structure}
+             }}
+         ]
+     }} """
 
     return system_message
 
@@ -253,72 +255,108 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
 
     elif selected_model == "gemini-1.5-flash":
         try:
-            # Use Google Gemini API
+            # Configure Gemini
             genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
             model = genai.GenerativeModel('gemini-1.5-flash',
                     generation_config={
-                        "temperature": 0.4,
-                        "top_p": 1,
-                        "top_k": 32,
+                        "temperature": 0.2,  # Reduced temperature for more focused outputs
+                        "top_p": 0.7,        # Adjusted for more precise responses
+                        "top_k": 20,         # Reduced for more focused selection
                         "max_output_tokens": 2048,
                     })
 
-            # Generate system message same as Groq
-            sys_message = generate_system_message(DynamicListingModel)
-            
-            # Combine messages for prompt
-            prompt = f"{sys_message}\n\nUser Input:\n{data}"
-            
-            # Count input tokens
-            input_tokens = model.count_tokens(prompt)
+            # Enhanced system message with explicit filtering instructions
+            base_sys_message = generate_system_message(DynamicListingModel)
+            enhanced_sys_message = f"""
+            {base_sys_message}
+
+            IMPORTANT EXTRACTION RULES:
+            1. ONLY extract information about opportunities that EXPLICITLY mention:
+               - Software development or IT solutions
+               - ERP systems (financial, HR, supply chain)
+               - IT consulting and advisory services
+               - Digital skills training
+               - Government technology solutions
+               - System integration
+               - Cloud solutions
+               - Data management
+               - Cybersecurity
+               - Digital transformation
+
+            2. SKIP any opportunity that:
+               - Does not explicitly mention technology or IT services
+               - Is purely about physical goods or non-IT services
+               - Is ambiguous about IT involvement
+
+            3. For each extracted opportunity, you MUST be able to point to specific text that confirms it's IT/software related.
+
+            FORMAT: Provide output in pure JSON following the schema exactly. Do not include explanatory text.
+
+            BEFORE INCLUDING ANY LISTING, ASK:
+            - Does it explicitly mention IT/software services?
+            - Is it clearly a technology procurement?
+            - Can I point to specific IT-related keywords in the text?
+
+            Only include listings that pass these checks.
+            """
+
+            # Function to validate if a response meets IT criteria
+            def validate_it_relevance(response_dict):
+                if not isinstance(response_dict, dict) or "listings" not in response_dict:
+                    return response_dict
+                
+                it_keywords = {
+                    'software', 'it ', 'ict', 'technology', 'digital', 'system', 
+                    'cloud', 'cyber', 'erp', 'data', 'integration', 'platform',
+                    'application', 'network', 'security', 'automation', 'api',
+                    'development', 'database', 'infrastructure', 'computing'
+                }
+                
+                filtered_listings = []
+                for listing in response_dict["listings"]:
+                    # Convert all text fields to lowercase for checking
+                    listing_text = ' '.join(str(v).lower() for v in listing.values())
+                    # Check if any IT keyword is present
+                    if any(keyword in listing_text for keyword in it_keywords):
+                        filtered_listings.append(listing)
+                
+                return {"listings": filtered_listings}
+
+            prompt = f"{enhanced_sys_message}\n\nUser Input:\n{data}"
+            input_token_count = model.count_tokens(prompt).total_tokens
             
             # Generate completion
             completion = model.generate_content(prompt)
-            response_content = completion.text
-            print("Raw Gemini Response:", response_content)
-
-            # Parse the JSON response
-            try:
-                parsed_response = json.loads(response_content)
-                
-                # Standardize the response format
-                formatted_data = {}
-                if isinstance(parsed_response, list):
-                    # If response is a list, wrap it in a dictionary
-                    formatted_data = {"listings": parsed_response}
-                elif isinstance(parsed_response, dict):
-                    # If response is a dict, standardize by ensuring it has a 'listings' key
-                    formatted_data = {"listings": [parsed_response]} if "listings" not in parsed_response else parsed_response
-                else:
-                    raise ValueError(f"Unexpected response type: {type(parsed_response)}")
-                
-                # Ensure data is prepared for DB insertion
-                for listing in formatted_data.get("listings", []):
-                    if not isinstance(listing, dict):
-                        raise ValueError(f"Invalid listing format, expected dict but got {type(listing)}")
-
-                # Extract token counts
-                token_counts = {
-                    "input_tokens": completion.usage_metadata.prompt_token_count if completion.usage_metadata else input_tokens,
-                    "output_tokens": completion.usage_metadata.candidates_token_count if completion.usage_metadata else 0
-                }
-
-                # Return standardized response and token counts
-                class FormattedResponse:
-                    def __init__(self, data):
-                        self.data = data
-                    def to_dict(self):
-                        return self.data
-                    def dict(self):
-                        return self.data
-
-                return FormattedResponse(formatted_data), token_counts
-
-            except json.JSONDecodeError as e:
-                print(f"Failed to parse Gemini response as JSON: {str(e)}")
-                print("Raw response:", response_content)
-                raise ValueError(f"Invalid JSON response from Gemini: {response_content}")
+            response_content = completion.text.strip()
             
+            # Pre-process and validate the response
+            response_content = response_content.replace('```json', '').replace('```', '').strip()
+            parsed_response = json.loads(response_content)
+            
+            # Apply IT relevance filtering
+            filtered_response = validate_it_relevance(parsed_response)
+            
+            # Create response object with the filtered data
+            class FormattedResponse:
+                def __init__(self, data):
+                    self.data = data
+                def to_dict(self):
+                    return self.data
+                def dict(self):
+                    return self.data
+
+            try:
+                output_token_count = model.count_tokens(json.dumps(filtered_response)).total_tokens
+            except:
+                output_token_count = len(json.dumps(filtered_response)) // 4
+
+            token_counts = {
+                "input_tokens": input_token_count,
+                "output_tokens": output_token_count
+            }
+
+            return FormattedResponse(filtered_response), token_counts
+
         except Exception as e:
             print(f"Error processing Gemini model: {str(e)}")
             import traceback
