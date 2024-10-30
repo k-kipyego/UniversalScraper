@@ -265,13 +265,20 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
                         "max_output_tokens": 2048,
                     })
 
-            # Enhanced system message with explicit filtering instructions
+            # Enhanced system message with explicit filtering instructions and translation capability
             base_sys_message = generate_system_message(DynamicListingModel)
             enhanced_sys_message = f"""
             {base_sys_message}
 
-            IMPORTANT EXTRACTION RULES:
-            1. ONLY extract information about opportunities that EXPLICITLY mention:
+            IMPORTANT EXTRACTION AND TRANSLATION RULES:
+            1. LANGUAGE HANDLING:
+               - Process content in ANY language
+               - Translate all extracted information to English
+               - Maintain the original meaning and technical terminology
+               - Include the original language version of the title in a new field 'original_title'
+               - If the listing is not in English, add a field 'source_language' specifying the original language
+
+            2. ONLY extract information about opportunities that EXPLICITLY mention:
                - Software development or IT solutions
                - ERP systems (financial, HR, supply chain)
                - IT consulting and advisory services
@@ -283,19 +290,24 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
                - Cybersecurity
                - Digital transformation
 
-            2. SKIP any opportunity that:
+            3. SKIP any opportunity that:
                - Does not explicitly mention technology or IT services
                - Is purely about physical goods or non-IT services
                - Is ambiguous about IT involvement
 
-            3. For each extracted opportunity, you MUST be able to point to specific text that confirms it's IT/software related.
+            4. For each extracted opportunity, you MUST be able to point to specific text that confirms it's IT/software related.
 
             FORMAT: Provide output in pure JSON following the schema exactly. Do not include explanatory text.
+            For non-English listings, include:
+            - 'original_title': The title in original language
+            - 'source_language': The language code (e.g., 'es', 'fr', 'de')
 
             BEFORE INCLUDING ANY LISTING, ASK:
             - Does it explicitly mention IT/software services?
             - Is it clearly a technology procurement?
             - Can I point to specific IT-related keywords in the text?
+            - Have I accurately translated all relevant information to English?
+            - Have I preserved the original title for non-English listings?
 
             Only include listings that pass these checks.
             """
@@ -312,12 +324,29 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
                     'development', 'database', 'infrastructure', 'computing'
                 }
                 
+                # Add common IT keywords in other languages
+                multilingual_it_keywords = {
+                    # Spanish
+                    'informática', 'desarrollo', 'tecnología', 'sistema', 'nube',
+                    # French
+                    'informatique', 'développement', 'technologie', 'système', 'nuage',
+                    # German
+                    'informatik', 'entwicklung', 'technologie', 'system', 'cloud',
+                    # Add more languages as needed
+                }
+                
+                it_keywords.update(multilingual_it_keywords)
+                
                 filtered_listings = []
                 for listing in response_dict["listings"]:
                     # Convert all text fields to lowercase for checking
                     listing_text = ' '.join(str(v).lower() for v in listing.values())
                     # Check if any IT keyword is present
                     if any(keyword in listing_text for keyword in it_keywords):
+                        # Ensure required translation fields are present for non-English listings
+                        if 'source_language' in listing and listing['source_language'] != 'en':
+                            if 'original_title' not in listing:
+                                listing['original_title'] = listing.get('title', 'No title available')
                         filtered_listings.append(listing)
                 
                 return {"listings": filtered_listings}
