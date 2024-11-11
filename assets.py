@@ -102,14 +102,19 @@ NUMBER_SCROLL=2
 LLAMA_MODEL_FULLNAME="lmstudio-community/Meta-Llama-3.1-8B-Instruct-GGUF"
 GROQ_LLAMA_MODEL_FULLNAME="llama-3.1-70b-versatile"
 
-SYSTEM_MESSAGE = """You are an intelligent text extraction and conversion assistant. Your task is to extract structured information from the given text and convert it into a pure JSON format.
- Focus specifically on procurement opportunities related to software and IT solutions, including custom software development, ERP systems (financial, HR, supply chain), 
- IT consulting and advisory services, Digital skills training, and capacity building. Only extract information that explicitly mentions these areas or 
- related keywords such as 'software', 'IT', 'cloud', 'data management', 'cybersecurity', 'system integration', etc. 
- If you encounter any content that is not in English, translate it into English before extracting the relevant information. Provide output in pure JSON format with no additional commentary."""
+SYSTEM_MESSAGE = """You are an intelligent text extraction and conversion assistant. Your task is to extract structured information from the given 
+     text and convert it into a pure JSON format. Focus specifically on procurement opportunities related to software and IT solutions, including custom software development, 
+     ERP systems (financial, HR, supply chain), IT consulting and advisory services, digital skills training, and capacity building. 
+     Additionally, include government and enterprise solutions such as Public Financial Management (budgeting, treasury, revenue), Identity Management (national ID, biometrics), 
+     Tax/Customs platforms (revenue collection, debt recovery),Robotics Process Automation, Business Process Outsourcing services, and related technical services like system integration, cloud solutions, and data management. 
+     Only extract information that explicitly mentions these areas or related keywords such as 'software', 'IT', 'cloud', 'data management', 'cybersecurity', and 'system integration'.  
+     If you encounter any content that is not in English, translate it into English before extracting the relevant information. Provide output in pure JSON format with no additional commentary."""
 
-USER_MESSAGE = f"""Extract procurement opportunity information from the provided text, focusing exclusively on software and IT solutions, including custom software development, ERP solutions, IT consulting, Digital training, and related technical services. 
-Only include information that contains keywords such as 'software', 'IT', 'cloud', 'data management', 'cybersecurity', and 'system integration'. If any part of the content is not in English, please translate it into English before extracting the information. Return only structured JSON data. Page content:\n\n"""
+USER_MESSAGE = """Extract structured information from the provided text, focusing specifically on procurement opportunities related to software and IT solutions. This includes areas such as custom software development, ERP systems (like financial, HR, or supply chain management), IT consulting and advisory services, digital skills training, and capacity building. 
+
+Additionally, look for procurement opportunities involving government and enterprise solutions, such as Public Financial Management (including budgeting, treasury, and revenue management), Identity Management systems (such as national ID or biometrics), Tax and Customs platforms (covering revenue collection and debt recovery), Robotics Process Automation, Business Process Outsourcing services, and other technical services like system integration, cloud computing, and data management.
+
+Ensure to extract information that contains relevant keywords such as 'software', 'IT', 'cloud', 'data management', 'cybersecurity', and 'system integration'. If any content is not in English, translate it into English before extracting the relevant information. The output should be in pure JSON format, with no additional commentary or non-relevant details. Only include content that explicitly relates to these areas or mentions the specified keywords."""
 
 PROMPT_PAGINATION = """
 You are an assistant that extracts pagination elements from markdown content of websites your goal as a universal pagination scrapper of urls from all websites no matter how different they are.

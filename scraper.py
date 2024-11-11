@@ -213,7 +213,7 @@ def generate_system_message(listing_model: BaseModel) -> str:
      text and convert it into a pure JSON format. Focus specifically on procurement opportunities related to software and IT solutions, including custom software development, 
      ERP systems (financial, HR, supply chain), IT consulting and advisory services, digital skills training, and capacity building. 
      Additionally, include government and enterprise solutions such as Public Financial Management (budgeting, treasury, revenue), Identity Management (national ID, biometrics), 
-     Tax/Customs platforms (revenue collection, debt recovery), Business Process Outsourcing services, and related technical services like system integration, cloud solutions, and data management. 
+     Tax/Customs platforms (revenue collection, debt recovery),Robotics Process Automation, Business Process Outsourcing services, and related technical services like system integration, cloud solutions, and data management. 
      Only extract information that explicitly mentions these areas or related keywords such as 'software', 'IT', 'cloud', 'data management', 'cybersecurity', and 'system integration'. 
      If you encounter any content that is not in English, translate it into English before extracting the relevant information. 
      Provide output in pure JSON format with no additional commentary, and ensure the output strictly follows this schema:
@@ -259,9 +259,9 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
             genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
             model = genai.GenerativeModel('gemini-1.5-flash',
                     generation_config={
-                        "temperature": 0.2,  # Reduced temperature for more focused outputs
-                        "top_p": 0.7,        # Adjusted for more precise responses
-                        "top_k": 20,         # Reduced for more focused selection
+                        "temperature": 0.2,
+                        "top_p": 0.7,
+                        "top_k": 20,
                         "max_output_tokens": 2048,
                     })
 
@@ -351,17 +351,36 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
                 
                 return {"listings": filtered_listings}
 
-            prompt = f"{enhanced_sys_message}\n\nUser Input:\n{data}"
+            prompt = f"{enhanced_sys_message}\n\n{USER_MESSAGE}{data}"
             input_token_count = model.count_tokens(prompt).total_tokens
             
-            # Generate completion
+            # Generate completion with additional logging
+            print("Sending request to Gemini...")
             completion = model.generate_content(prompt)
+            print(f"Received response from Gemini. Response type: {type(completion)}")
+            
+            if not completion or not completion.text:
+                print("Empty response received from Gemini")
+                raise ValueError("Empty response from Gemini API")
+                
             response_content = completion.text.strip()
+            print(f"Raw response content: {response_content[:500]}...")  # Print first 500 chars for debugging
             
-            # Pre-process and validate the response
-            response_content = response_content.replace('```json', '').replace('```', '').strip()
-            parsed_response = json.loads(response_content)
+            # Add validation before JSON parsing
+            if not response_content:
+                raise ValueError("Empty response content")
+                
+            # Try to clean the response if it contains markdown code blocks
+            if response_content.startswith("```") and response_content.endswith("```"):
+                response_content = response_content.replace("```json", "").replace("```", "").strip()
             
+            try:
+                parsed_response = json.loads(response_content)
+            except json.JSONDecodeError as je:
+                print(f"JSON parsing error: {str(je)}")
+                print(f"Problematic content: {response_content}")
+                # Attempt to provide a valid fallback response
+                parsed_response = {"listings": []}
             # Apply IT relevance filtering
             filtered_response = validate_it_relevance(parsed_response)
             
@@ -388,9 +407,11 @@ def format_data(data, DynamicListingsContainer, DynamicListingModel, selected_mo
 
         except Exception as e:
             print(f"Error processing Gemini model: {str(e)}")
-            import traceback
-            print(traceback.format_exc())
-            return None, None
+        print(f"Full error details:")
+        import traceback
+        print(traceback.format_exc())
+        # Return a valid but empty response instead of None
+        return FormattedResponse({"listings": []}), {"input_tokens": 0, "output_tokens": 0}
     
     elif selected_model == "Groq Llama3.1 70b":
         try:
