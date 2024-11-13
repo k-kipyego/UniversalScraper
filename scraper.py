@@ -20,6 +20,8 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from typing import Optional
+from urllib.parse import urljoin
 
 from openai import OpenAI
 import google.generativeai as genai
@@ -87,21 +89,50 @@ def fetch_html_selenium(url):
         driver.get(url)
         
         # Add random delays to mimic human behavior
-        time.sleep(1)  # Adjust this to simulate time for user to read or interact
+        time.sleep(random.uniform(1, 2))
         driver.maximize_window()
         
-        # Try to find and click the 'Accept Cookies' button
-        # click_accept_cookies(driver)
-
-        # Add more realistic actions like scrolling
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight/2);")
-        time.sleep(random.uniform(1.1, 1.8))  # Simulate time taken to scroll and read
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight/1.2);")
-        time.sleep(random.uniform(1.1, 1.8))
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight/1);")
-        time.sleep(random.uniform(1.1, 2.1))
+        # Get the base URL for making relative URLs absolute
+        base_url = driver.current_url
+        
+        # Execute JavaScript to collect all procurement notice links
+        js_script = """
+        function findProcurementLinks() {
+            const links = [];
+            const patterns = [
+                /tender/i, /procurement/i, /bid/i, /rfp/i, /proposal/i,
+                /notice/i, /detail/i, /view/i, /more/i
+            ];
+            
+            document.querySelectorAll('a').forEach(link => {
+                const href = link.href;
+                const text = link.textContent.toLowerCase();
+                const onClick = link.getAttribute('onclick');
+                const dataAttrs = Array.from(link.attributes)
+                    .filter(attr => attr.name.startsWith('data-'))
+                    .map(attr => attr.value);
+                
+                if (patterns.some(pattern => 
+                    pattern.test(href) || 
+                    pattern.test(text) ||
+                    (onClick && pattern.test(onClick)) ||
+                    dataAttrs.some(attr => pattern.test(attr))
+                )) {
+                    links.push(href);
+                }
+            });
+            return links;
+        }
+        return findProcurementLinks();
+        """
+        procurement_links = driver.execute_script(js_script)
         html = driver.page_source
-        return html
+        
+        return {
+            'html': html,
+            'base_url': base_url,
+            'procurement_links': procurement_links
+        }
     finally:
         driver.quit()
 
@@ -114,13 +145,34 @@ def clean_html(html_content):
 
     return str(soup)
 
-def html_to_markdown_with_readability(html_content):
+
+def html_to_markdown_with_readability(html_content, base_url=None):
+    """Convert HTML to markdown while preserving URLs and making them absolute."""
+    # Check if html_content is a tuple (from fetch_html_selenium)
+    if isinstance(html_content, tuple):
+        html_string, base_url, procurement_links = html_content
+    else:
+        html_string = html_content
+        procurement_links = []
+
+    # Create BeautifulSoup object
+    soup = BeautifulSoup(html_string, 'html.parser')
     
-    cleaned_html = clean_html(html_content)  
+    # Make all URLs absolute
+    if base_url:
+        for tag in soup.find_all(['a', 'link'], href=True):
+            tag['href'] = urljoin(base_url, tag['href'])
     
-    # Convert to markdown
+    # Add procurement links as data attribute if they exist
+    if procurement_links:
+        soup.body['data-procurement-links'] = json.dumps(procurement_links)
+    
+    cleaned_html = clean_html(str(soup))
+    
+    # Convert to markdown while preserving URLs
     markdown_converter = html2text.HTML2Text()
     markdown_converter.ignore_links = False
+    markdown_converter.wrap_links = False
     markdown_content = markdown_converter.handle(cleaned_html)
     
     return markdown_content
@@ -158,15 +210,15 @@ def remove_urls_from_file(file_path):
     return cleaned_content
 
 
-def create_dynamic_listing_model(field_names: List[str]) -> Type[BaseModel]:
-    """
-    Dynamically creates a Pydantic model based on provided fields.
-    field_name is a list of names of the fields to extract from the markdown.
-    """
-    # Create field definitions using aliases for Field parameters
-    field_definitions = {field: (str, ...) for field in field_names}
-    # Dynamically create the model with all field
-    return create_model('DynamicListingModel', **field_definitions)
+def create_dynamic_listing_model(fields: List[str]):
+    """Creates a dynamic Pydantic model based on the provided fields."""
+    field_definitions = {
+        field: (Optional[str], None) for field in fields
+    }
+    # Add direct_url field to capture specific procurement notice URL
+    field_definitions['direct_url'] = (Optional[str], Field(None, description="Direct URL to the specific procurement notice"))
+    
+    return create_model('DynamicListing', **field_definitions)
 
 def create_listings_container_model(listing_model: Type[BaseModel]) -> Type[BaseModel]:
     """

@@ -47,6 +47,7 @@ def create_structured_table(conn, table_name: str):
         id SERIAL PRIMARY KEY,
         website_name TEXT,
         website_url TEXT,
+        direct_url TEXT,  -- Added direct URL column
         {columns},
         original_id INTEGER,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -85,11 +86,11 @@ def fetch_scraped_data(conn) -> List[Dict]:
         raise
 
 def process_and_insert_data(conn, scraped_data: List[RealDictRow], target_table: str):
-    """Processes scraped data, merges listings from different rows, and inserts only new data into the structured table."""
+    """Processes scraped data and inserts into the structured table."""
     insert_query = f"""
     INSERT INTO {target_table} 
-    (website_name, website_url, {', '.join([label.lower().replace(' ', '_') for label in PREDEFINED_LABELS])}, original_id)
-    VALUES (%s, %s, {', '.join(['%s' for _ in PREDEFINED_LABELS])}, %s)
+    (website_name, website_url, direct_url, {', '.join([label.lower().replace(' ', '_') for label in PREDEFINED_LABELS])}, original_id)
+    VALUES (%s, %s, %s, {', '.join(['%s' for _ in PREDEFINED_LABELS])}, %s)
     ON CONFLICT (title, description, reference_number) DO NOTHING
     """
     
@@ -100,48 +101,39 @@ def process_and_insert_data(conn, scraped_data: List[RealDictRow], target_table:
         with conn.cursor() as cursor:
             for row in scraped_data:
                 try:
-                    # Convert RealDictRow to dict
                     row_dict = dict(row)
-                    
-                    # The 'data' field contains the listings JSON
                     data_content = row_dict.get('data')
                     if not data_content:
-                        logger.error("No 'data' field found in row")
                         continue
                     
-                    # Parse the JSON data if it's a string
                     if isinstance(data_content, str):
                         try:
                             data_content = json.loads(data_content)
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Failed to parse JSON data: {e}")
+                        except json.JSONDecodeError:
                             continue
                     
-                    # Extract listings from the data structure
                     listings = []
                     if isinstance(data_content, list):
-                        # Handle case where data is a list of objects with 'listings'
                         for item in data_content:
                             if isinstance(item, dict) and 'listings' in item:
                                 listings.extend(item.get('listings', []))
                     elif isinstance(data_content, dict) and 'listings' in data_content:
-                        # Handle case where data directly contains 'listings'
                         listings = data_content.get('listings', [])
                     
                     website_name = row_dict.get('website_name', 'Unknown')
                     website_url = row_dict.get('website_url', 'Unknown')
                     
-                    logger.debug(f"Found {len(listings)} listings to process")
-                    
                     for listing in listings:
                         if isinstance(listing, (dict, RealDictRow)):
                             listing_dict = dict(listing) if isinstance(listing, RealDictRow) else listing
                             
-                            values = [website_name, website_url]
+                            # Extract direct_url from listing or fall back to website_url
+                            direct_url = listing_dict.get('direct_url', website_url)
+                            
+                            values = [website_name, website_url, direct_url]
                             values.extend([listing_dict.get(label, '') for label in PREDEFINED_LABELS])
                             values.append(row_dict.get('id', None))
                             
-                            logger.debug(f"Attempting to insert listing with values: {values}")
                             cursor.execute(insert_query, values)
                             
                             if cursor.rowcount > 0:
@@ -154,7 +146,7 @@ def process_and_insert_data(conn, scraped_data: List[RealDictRow], target_table:
                     continue
             
             conn.commit()
-            logger.info(f"Successfully inserted {inserted_count} new rows and skipped {skipped_count} existing rows in {target_table}")
+            logger.info(f"Inserted {inserted_count} new rows, skipped {skipped_count} rows")
     except Exception as e:
         logger.error(f"Failed to merge and insert data: {e}", exc_info=True)
         conn.rollback()

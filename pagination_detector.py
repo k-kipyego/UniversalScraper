@@ -42,22 +42,33 @@ def calculate_pagination_price(token_counts: Dict[str, int], model: str) -> floa
 
 def detect_pagination_elements(url: str, indications: str, selected_model: str, markdown_content: str) -> Tuple[Union[PaginationData, Dict, str], Dict, float]:
     try:
+        # Extract base URL components
+        from urllib.parse import urlparse, urljoin
+        parsed_url = urlparse(url)
+        base_url = f"{parsed_url.scheme}://{parsed_url.netloc}"
+
+        # Enhance the prompt to handle relative URLs
+        prompt_pagination = f"""
+        Analyze the provided markdown content and extract pagination elements. The current page URL is: {url}
+
+        Important URL handling rules:
+        1. For relative URLs starting with '/' (e.g., '/page/2'), combine with base URL: {base_url}
+        2. For relative URLs without '/' (e.g., 'page/2'), combine with current URL directory
+        3. For URLs with query parameters, preserve the essential parameters
+        4. Return complete, absolute URLs only
+        5. Look for common pagination patterns:
+           - Numbered pages
+           - Next/Previous links
+           - Load more buttons
+           - Infinite scroll markers
+        6. Validate all URLs match the domain pattern of the original URL
+
+        Return only valid, complete URLs that maintain the same domain as the source.
         """
-        Uses AI models to analyze markdown content and extract pagination elements.
 
-        Args:
-            selected_model (str): The name of the OpenAI model to use.
-            markdown_content (str): The markdown content to analyze.
-
-        Returns:
-            Tuple[PaginationData, Dict, float]: Parsed pagination data, token counts, and pagination price.
-        """ 
-        prompt_pagination = PROMPT_PAGINATION + "\n The url of the page to extract pagination from " + url + " if the urls that you find are not complete combine them intelligently in a way that fit the pattern **ALWAYS GIVE A FULL URL**"
-        if indications != "":
-            prompt_pagination += PROMPT_PAGINATION + "\n\n these are the users indications that, pay special attention to them: " + indications + "\n\n below are the markdowns of the website: \n\n"
-        else:
-            prompt_pagination += PROMPT_PAGINATION + "\n There are no user indications in this case just apply the logic described. \n\n below are the markdowns of the website: \n\n"
-
+        if indications:
+            prompt_pagination += f"\nAdditional instructions: {indications}"
+            
         if selected_model in ["gpt-4o-mini", "gpt-4o-2024-08-06"]:
             # Use OpenAI API
             client = OpenAI(api_key=os.getenv('OPENAI_API_KEY'))

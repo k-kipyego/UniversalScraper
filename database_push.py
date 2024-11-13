@@ -42,20 +42,13 @@ def get_db_connection():
         raise
 
 def create_table(conn, table_name: str):
-    """
-    Creates the scraped_data table in the PostgreSQL database if it doesn't already exist.
-    
-    Args:
-        conn: Active PostgreSQL connection object.
-        table_name: Name of the table to create.
-    """
     create_table_query = f"""
     CREATE TABLE IF NOT EXISTS {table_name} (
         id SERIAL PRIMARY KEY,
         file_name TEXT NOT NULL,
         data JSONB NOT NULL,
-        website_name TEXT,  -- Added website name
-        website_url TEXT,   -- Added website URL
+        website_name TEXT,
+        website_url TEXT,   -- This becomes the main/parent URL
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """

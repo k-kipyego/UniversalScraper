@@ -227,30 +227,49 @@ def scrape_multiple_urls(urls, fields, selected_model):
     all_data = []
     first_url_markdown = None
     
-    start_time = time.time()  # Record the start time
+    start_time = time.time()
     
     for i, url in enumerate(urls, start=1):
-        raw_html = fetch_html_selenium(url)
-        markdown = html_to_markdown_with_readability(raw_html)
+        # Get the HTML and related data
+        scraped_data = fetch_html_selenium(url)
+        
+        # Convert to markdown with the base URL for absolute links
+        markdown = html_to_markdown_with_readability(
+            scraped_data['html'], 
+            base_url=scraped_data['base_url']
+        )
+        
         if i == 1:
             first_url_markdown = markdown
         
-        input_tokens, output_tokens, cost, formatted_data = scrape_url(url, fields, selected_model, output_folder, i, markdown)
+        # Add the procurement links to the context
+        context = {
+            'url': url,
+            'procurement_links': scraped_data['procurement_links']
+        }
+        
+        input_tokens, output_tokens, cost, formatted_data = scrape_url(
+            context, fields, selected_model, output_folder, i, markdown
+        )
+        
         total_input_tokens += input_tokens
         total_output_tokens += output_tokens
         total_cost += cost
         all_data.append(formatted_data)
     
-    end_time = time.time()  # Record the end time
-    scraping_time = end_time - start_time  # Calculate the total time taken
+    end_time = time.time()
+    scraping_time = end_time - start_time
     
     return output_folder, total_input_tokens, total_output_tokens, total_cost, all_data, first_url_markdown, scraping_time
 
 
 def perform_scrape():
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
-    raw_html = fetch_html_selenium(url_input)
-    markdown = html_to_markdown_with_readability(raw_html)
+    scraped_data = fetch_html_selenium(url_input)
+    markdown = html_to_markdown_with_readability(
+        scraped_data['html'], 
+        base_url=scraped_data['base_url']
+    )
     save_raw_data(markdown, timestamp)
     
     pagination_info = None
@@ -269,8 +288,12 @@ def perform_scrape():
     if show_tags:
         DynamicListingModel = create_dynamic_listing_model(selected_labels)
         DynamicListingsContainer = create_listings_container_model(DynamicListingModel)
+        context = {
+            'url': url_input,
+            'procurement_links': scraped_data['procurement_links']
+        }
         formatted_data, tokens_count = format_data(
-            markdown, DynamicListingsContainer, DynamicListingModel, model_selection
+            markdown, DynamicListingsContainer, DynamicListingModel, model_selection, context
         )
         input_tokens, output_tokens, total_cost = calculate_price(tokens_count, model=model_selection)
         df = save_formatted_data(formatted_data, timestamp)

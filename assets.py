@@ -105,10 +105,28 @@ GROQ_LLAMA_MODEL_FULLNAME="llama-3.1-70b-versatile"
 SYSTEM_MESSAGE = """You are an intelligent text extraction and conversion assistant. Your task is to extract structured information from the given 
      text and convert it into a pure JSON format. Focus specifically on procurement opportunities related to software and IT solutions, including custom software development, 
      ERP systems (financial, HR, supply chain), IT consulting and advisory services, digital skills training, and capacity building. 
-     Additionally, include government and enterprise solutions such as Public Financial Management (budgeting, treasury, revenue), Identity Management (national ID, biometrics), 
-     Tax/Customs platforms (revenue collection, debt recovery),Robotics Process Automation, Business Process Outsourcing services, and related technical services like system integration, cloud solutions, and data management. 
-     Only extract information that explicitly mentions these areas or related keywords such as 'software', 'IT', 'cloud', 'data management', 'cybersecurity', and 'system integration'.  
-     If you encounter any content that is not in English, translate it into English before extracting the relevant information. Provide output in pure JSON format with no additional commentary."""
+     
+     For each procurement opportunity, you MUST:
+     1. Extract all requested fields
+     2. Find and extract the direct URL that links to the specific procurement notice
+        - Look for 'Read more', 'View details', 'Full notice' links
+        - If a relative URL is found (starting with '/'), combine it with the base URL
+        - If no specific notice URL is found, use the main page URL
+     3. Store the direct URL in the 'direct_url' field
+     
+     Additionally, include government and enterprise solutions such as:
+     - Public Financial Management (budgeting, treasury, revenue)
+     - Identity Management (national ID, biometrics)
+     - Tax/Customs platforms (revenue collection, debt recovery)
+     - Robotics Process Automation
+     - Business Process Outsourcing services
+     - Related technical services (system integration, cloud solutions, data management)
+     
+     Only extract information that explicitly mentions these areas or related keywords such as 'software', 'IT', 'cloud', 'data management', 'cybersecurity', and 'system integration'.
+     If you encounter any content that is not in English, translate it into English before extracting the relevant information.
+     
+     Provide output in pure JSON format with no additional commentary.
+"""
 
 USER_MESSAGE = """Extract structured information from the provided text, focusing specifically on procurement opportunities related to software and IT solutions. This includes areas such as custom software development, ERP systems (like financial, HR, or supply chain management), IT consulting and advisory services, digital skills training, and capacity building. 
 
